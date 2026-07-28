@@ -6,7 +6,7 @@ class ApiConfig {
     }
 
     // Replace your old local IP with your ngrok HTTPS URL:
-    return 'https://endpoint-chooser-finally.ngrok-free.dev -> http://localhost:8000 '; 
+    return 'https://endpoint-chooser-finally.ngrok-free.dev -> http://localhost:8000'; 
   }
 
   static String get loginUrl => '$baseUrl/api/login/';
