@@ -5,10 +5,8 @@ class ApiConfig {
       return override;
     }
 
-    // Default to the LAN address used by the backend in this workspace.
-    // If your backend IP changes, pass --dart-define=API_BASE_URL=http://x.x.x.x:8000
-    // when running Flutter.
-    return 'http://192.168.1.47:8000';
+    // Replace your old local IP with your ngrok HTTPS URL:
+    return 'https://YOUR-NGROK-URL.ngrok-free.app'; 
   }
 
   static String get loginUrl => '$baseUrl/api/login/';
