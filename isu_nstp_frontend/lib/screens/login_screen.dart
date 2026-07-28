@@ -36,6 +36,9 @@ class _LoginScreenState extends State<LoginScreen> {
       final response = await http
           .post(
             Uri.parse(loginUrl),
+            headers: {
+              'ngrok-skip-browser-warning': 'true',
+            },
             body: {
               'username': _usernameController.text.trim(),
               'password': _passwordController.text,
@@ -115,7 +118,10 @@ class _LoginScreenState extends State<LoginScreen> {
       final response = await http
           .post(
             Uri.parse(resetPasswordUrl),
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true',
+            },
             body: json.encode({'username': username, 'email': email}),
           )
           .timeout(const Duration(seconds: 7)); // ⏱️ Added timeout limit
