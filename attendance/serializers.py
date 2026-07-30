@@ -3,16 +3,41 @@ from django.contrib.auth.hashers import make_password
 from .models import User, AttendanceSession, AttendanceRecord, StudentProfile, SystemSettings
 
 class RegisterSerializer(serializers.ModelSerializer):
-    course_and_section = serializers.CharField(required=True)
+    # Support common field name keys from the frontend
+    id_number = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    student_id = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    course = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    component = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    section = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    section_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
-        model = StudentProfile
-        fields = ['username', 'email', 'password', 'course_and_section', 'id_picture_front']
+        model = User
+        fields = [
+            'username', 'email', 'password', 
+            'id_number', 'student_id', 
+            'course', 'component', 
+            'section', 'section_code'
+        ]
 
     def create(self, validated_data):
-        course_and_section = validated_data.pop('course_and_section')
-        # Implementation hidden for brevity...
-        pass
+        # Extract profile fields with fallbacks for alternative key names
+        student_id_val = validated_data.pop('student_id', None) or validated_data.pop('id_number', None)
+        component_val = validated_data.pop('component', None) or validated_data.pop('course', None)
+        section_code_val = validated_data.pop('section_code', None) or validated_data.pop('section', None)
+
+        user = User.objects.create_user(**validated_data)
+
+        # Update or create using the exact model field names expected by UserSerializer
+        StudentProfile.objects.update_or_create(
+            user=user,
+            defaults={
+                'student_id': student_id_val,
+                'component': component_val,
+                'section_code': section_code_val,
+            }
+        )
+        return user
 
 class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False, allow_blank=True)

@@ -33,11 +33,23 @@ class RegisterView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, *args, **kwargs):
+        # 1. Grab all possible fields the frontend might be sending
         username = request.data.get('username', '').strip()
-        course_and_section = request.data.get('course_and_section', '').strip()
         email = request.data.get('email', '').strip().lower()
         password = request.data.get('password')
         id_picture_front = request.FILES.get('id_picture_front')
+        
+        # Grab the extra profile fields
+        id_number = request.data.get('id_number', '').strip()
+        course = request.data.get('course', '').strip()
+        section = request.data.get('section', '').strip()
+        course_and_section = request.data.get('course_and_section', '').strip()
+
+        # Fallback: If frontend only sent id_number, use it as username
+        if not username and id_number:
+            username = id_number
+            
+        student_id_val = id_number or username
 
         # --- Basic Validation ---
         if not email or not email.endswith('@isu.edu.ph'):
@@ -46,7 +58,7 @@ class RegisterView(APIView):
         if User.objects.filter(email=email).exists():
             return Response({'detail': 'An account with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 🛡️ THE SAFETY BUBBLE: If anything inside this block fails, it cancels everything!
+        # 🛡️ THE SAFETY BUBBLE
         try:
             with transaction.atomic():
                 # 1. SAVE THE USER 
@@ -58,12 +70,14 @@ class RegisterView(APIView):
                 user.set_password(password)
                 user.save()
 
-                # 2. SAVE THE STUDENT PROFILE
+                # 2. SAVE THE STUDENT PROFILE (Now with all fields included!)
                 StudentProfile.objects.create(
                     user=user,
-                    course_and_section=course_and_section,
+                    student_id=student_id_val,  # Maps to profile.student_id
+                    component=course,           # Maps to profile.component (Course)
+                    section_code=section,       # Maps to profile.section_code (Section)
+                    course_and_section=course_and_section or f"{course} {section}".strip(),
                     id_picture_front=id_picture_front
-                    # NOTE: If your model requires student_id, we will see the error now!
                 )
         except Exception as e:
             print(f"\n❌ DATABASE CRASH: {str(e)}\n")

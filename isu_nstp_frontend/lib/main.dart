@@ -1,7 +1,17 @@
 import 'package:flutter/material.dart';
 import 'screens/login_screen.dart';
+import 'package:firebase_core/firebase_core.dart';
 
-void main() {
+void main() async {
+  // 1. Ensure Flutter bindings are initialized first
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 2. Initialize Firebase
+  await Firebase.initializeApp(
+    // If you configured Firebase CLI, uncomment the line below:
+    // options: DefaultFirebaseOptions.currentPlatform, 
+  );
+
   runApp(const IsuNstpApp());
 }
 
