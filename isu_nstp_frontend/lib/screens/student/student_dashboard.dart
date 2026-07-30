@@ -19,6 +19,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
   bool _isOpeningCheckIn = false;
   late UserModel _currentUser;
 
+  // --- ISU Theme Colors ---
+  static const Color isuGreen = Color(0xFF006837);
+
   @override
   void initState() {
     super.initState();
@@ -73,14 +76,14 @@ class _StudentDashboardState extends State<StudentDashboard> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Student Dashboard"),
-        backgroundColor: Colors.green,
+        backgroundColor: isuGreen,
         foregroundColor: Colors.white,
         elevation: 2,
         actions: [
           IconButton(
             icon: const Icon(Icons.person),
-            tooltip: 'Profile',
-            onPressed: _showProfileEditor,
+            tooltip: 'Profile Details',
+            onPressed: _showProfileView,
           ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -116,7 +119,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                   ? 'Loading active session...'
                   : 'Use GPS to mark your attendance',
               icon: Icons.location_on,
-              iconColor: Colors.green,
+              iconColor: isuGreen,
               onTap: _isOpeningCheckIn ? null : _openCurrentSessionCheckIn,
             ),
             const SizedBox(height: 16),
@@ -139,92 +142,63 @@ class _StudentDashboardState extends State<StudentDashboard> {
     );
   }
 
-  void _showProfileEditor() {
-    final courseController = TextEditingController(text: _currentUser.course ?? '');
-    final studentIdController = TextEditingController(text: _currentUser.studentId ?? '');
-    final sectionController = TextEditingController(text: _currentUser.section ?? '');
-    final emailController = TextEditingController(text: _currentUser.email);
-    final formKey = GlobalKey<FormState>();
-
+  // --- READ-ONLY PROFILE DIALOG ---
+  void _showProfileView() {
     showDialog(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Edit Profile'),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: courseController,
-                    decoration: const InputDecoration(
-                      labelText: 'Course',
-                      hintText: 'CWTS / LTS / ROTC',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: studentIdController,
-                    decoration: const InputDecoration(
-                      labelText: 'ID Number',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: sectionController,
-                    decoration: const InputDecoration(
-                      labelText: 'Section',
-                      hintText: 'CWTS-1A',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      helperText: 'Must end with @isu.edu.ph',
-                    ),
-                    validator: (value) {
-                      final email = value?.trim() ?? '';
-                      if (email.isNotEmpty && !email.toLowerCase().endsWith('@isu.edu.ph')) {
-                        return 'Email must end with @isu.edu.ph';
-                      }
-                      return null;
-                    },
-                  ),
-                ],
-              ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.account_circle, color: isuGreen, size: 28),
+              SizedBox(width: 8),
+              Text('Profile Details', style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildReadOnlyTile(
+                  icon: Icons.person,
+                  label: 'Username',
+                  value: _currentUser.username,
+                ),
+                const Divider(height: 1),
+                _buildReadOnlyTile(
+                  icon: Icons.badge,
+                  label: 'ID Number',
+                  value: _currentUser.studentId ?? 'Not set',
+                ),
+                const Divider(height: 1),
+                _buildReadOnlyTile(
+                  icon: Icons.school,
+                  label: 'Course / Component',
+                  value: _currentUser.course ?? 'Not assigned',
+                ),
+                const Divider(height: 1),
+                _buildReadOnlyTile(
+                  icon: Icons.class_,
+                  label: 'Section',
+                  value: _currentUser.section ?? 'Not assigned',
+                ),
+                const Divider(height: 1),
+                _buildReadOnlyTile(
+                  icon: Icons.email,
+                  label: 'Email Address',
+                  value: _currentUser.email,
+                ),
+              ],
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (!formKey.currentState!.validate()) return;
-
-                    final navigator = Navigator.of(dialogContext);
-
-                final updated = await _saveProfileChanges(
-                  course: courseController.text.trim(),
-                  studentId: studentIdController.text.trim(),
-                  section: sectionController.text.trim(),
-                  email: emailController.text.trim(),
-                );
-
-                if (!mounted) return;
-
-                if (updated) {
-                      navigator.pop();
-                  _showSnackBar('Profile updated successfully.', Colors.green);
-                }
-              },
-              child: const Text('Save'),
+              child: const Text(
+                'Close',
+                style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
             ),
           ],
         );
@@ -232,38 +206,35 @@ class _StudentDashboardState extends State<StudentDashboard> {
     );
   }
 
-  Future<bool> _saveProfileChanges({
-    required String course,
-    required String studentId,
-    required String section,
-    required String email,
-  }) async {
-    try {
-      final response = await http.patch(
-        Uri.parse('${ApiConfig.usersUrl}${_currentUser.id}/'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'course': course,
-          'student_id': studentId,
-          'email': email,
-          'section': section,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        setState(() {
-          _currentUser = UserModel.fromJson(data);
-        });
-        return true;
-      }
-
-      _showSnackBar('Unable to update profile. Error ${response.statusCode}.', Colors.red);
-      return false;
-    } catch (e) {
-      _showSnackBar('Network error while updating profile: $e', Colors.red);
-      return false;
-    }
+  Widget _buildReadOnlyTile({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(icon, color: isuGreen),
+        title: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            color: Colors.grey,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        subtitle: Text(
+          value.trim().isEmpty ? 'N/A' : value,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildDashboardCard(

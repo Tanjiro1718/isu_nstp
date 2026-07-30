@@ -14,13 +14,13 @@ class StudentCheckInScreen extends StatefulWidget {
   final int allowedRadiusMeters;
 
   const StudentCheckInScreen({
-    Key? key,
+    super.key,
     required this.user,
     required this.sessionId,
     required this.targetLat,
     required this.targetLng,
     required this.allowedRadiusMeters,
-  }) : super(key: key);
+  });
 
   @override
   _StudentCheckInScreenState createState() => _StudentCheckInScreenState();

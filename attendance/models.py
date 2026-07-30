@@ -1,5 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.utils import timezone
+import datetime
 
 # 1. Custom User Model to differentiate the 4 distinct roles
 class User(AbstractUser):
@@ -16,22 +18,47 @@ class User(AbstractUser):
         ('cabagan', 'Cabagan'),
     )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='student')
-    campus = models.CharField(max_length=30, choices=CAMPUS_CHOICES)
+    campus = models.CharField(max_length=30, choices=CAMPUS_CHOICES, blank=True, null=True) # Made optional for initial registration
     phone_number = models.CharField(max_length=15, blank=True, null=True)
+
 
 # 2. Instructor Details
 class InstructorProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, limit_choices_to={'role': 'instructor'})
     department = models.CharField(max_length=50) # e.g., ROTC, CWTS, LTS
 
-# 3. Student Profile containing their specific NSTP configuration
+    def __str__(self):
+        return f"Instructor: {self.user.get_full_name() or self.user.username}"
+
+
+# 3. Student Profile containing their specific NSTP configuration & registration status
 class StudentProfile(models.Model):
     COMPONENT_CHOICES = (('CWTS', 'CWTS'), ('LTS', 'LTS'), ('ROTC', 'ROTC'))
     
-    user = models.OneToOneField(User, on_delete=models.CASCADE, limit_choices_to={'role': 'student'})
-    student_id = models.CharField(max_length=20, unique=True) # e.g., 23-12345
-    component = models.CharField(max_length=10, choices=COMPONENT_CHOICES)
-    section_code = models.CharField(max_length=20) # e.g., CWTS-1A
+    user = models.OneToOneField(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='student_profile', 
+        limit_choices_to={'role': 'student'}
+    )
+    student_id = models.CharField(max_length=20, unique=True) # e.g., 21-12345
+    course_and_section = models.CharField(max_length=100, blank=True, null=True) # e.g., BSIT-NS 1A (NEW)
+    
+    # Made optional during initial registration (assigned by admin/director later)
+    component = models.CharField(max_length=10, choices=COMPONENT_CHOICES, blank=True, null=True) 
+    section_code = models.CharField(max_length=20, blank=True, null=True) # e.g., CWTS-1A
+    
+    # --- Registration Verification & Approval Status (NEW) ---
+    id_picture_front = models.ImageField(upload_to='student_ids/', blank=True, null=True)
+    is_email_verified = models.BooleanField(default=False)
+    is_approved_by_admin = models.BooleanField(default=False)
+
+    # --- Push Notifications (NEW) ---
+    fcm_token = models.CharField(max_length=255, blank=True, null=True)
+
+    def __str__(self):
+        return f"Student: {self.student_id} - {self.course_and_section or 'Unassigned'}"
+
 
 # 4. Attendance Session created by Instructors
 class AttendanceSession(models.Model):
@@ -41,6 +68,10 @@ class AttendanceSession(models.Model):
     target_latitude = models.DecimalField(max_digits=9, decimal_places=6)  # Geofence target
     target_longitude = models.DecimalField(max_digits=9, decimal_places=6) # Geofence target
     radius_meters = models.IntegerField(default=50) # Allowed check-in radius
+
+    def __str__(self):
+        return f"{self.title} ({self.date_time.strftime('%Y-%m-%d')})"
+
 
 # 5. Attendance Ledger mapped to Students
 class AttendanceRecord(models.Model):
@@ -58,6 +89,10 @@ class AttendanceRecord(models.Model):
     selfie_verified = models.BooleanField(default=False)
     selfie_image = models.ImageField(upload_to='attendance/selfies/', blank=True, null=True)
 
+    def __str__(self):
+        return f"{self.student.student_id} - {self.session.title} [{self.status}]"
+
+
 # 6. System Settings for global configurations
 class SystemSettings(models.Model):
     target_latitude = models.FloatField(default=16.9240)
@@ -72,3 +107,21 @@ class SystemSettings(models.Model):
 
     def __str__(self):
         return f"Settings: Radius {self.allowed_radius_meters}m ({self.academic_year})"
+
+class OTPVerification(models.Model):
+    email = models.EmailField(unique=True)
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now=True)
+
+    def is_valid(self):
+        # Code is valid for 10 minutes
+        return timezone.now() - self.created_at < datetime.timedelta(minutes=10)
+
+    def __str__(self):
+        return f"{self.email} - {self.code}"
+
+class PendingApproval(StudentProfile):
+    class Meta:
+        proxy = True  # Tells Django NOT to create a new database table
+        verbose_name = 'Pending Approval'
+        verbose_name_plural = 'Pending Approvals'

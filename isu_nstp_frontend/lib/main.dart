@@ -6,7 +6,7 @@ void main() {
 }
 
 class IsuNstpApp extends StatelessWidget {
-  const IsuNstpApp({Key? key}) : super(key: key);
+  const IsuNstpApp({super.key});
 
   // This widget is the root of your application.
   @override

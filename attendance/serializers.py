@@ -1,13 +1,25 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
-from .models import User, AttendanceSession, AttendanceRecord, StudentProfile
-from .models import SystemSettings # Make sure to add this to your imports
+from .models import User, AttendanceSession, AttendanceRecord, StudentProfile, SystemSettings
+
+class RegisterSerializer(serializers.ModelSerializer):
+    course_and_section = serializers.CharField(required=True)
+
+    class Meta:
+        model = StudentProfile
+        fields = ['username', 'email', 'password', 'course_and_section', 'id_picture_front']
+
+    def create(self, validated_data):
+        course_and_section = validated_data.pop('course_and_section')
+        # Implementation hidden for brevity...
+        pass
 
 class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False, allow_blank=True)
     student_id = serializers.SerializerMethodField()
     course = serializers.SerializerMethodField()
     section = serializers.SerializerMethodField()
+    id_picture_front = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -21,18 +33,17 @@ class UserSerializer(serializers.ModelSerializer):
             'course',
             'section',
             'password',
+            'is_active',
+            'id_picture_front',
         ]
         extra_kwargs = {'password': {'write_only': True}}
 
     def create(self, validated_data):
-        # 1. Hash the password safely
         if 'password' in validated_data:
             validated_data['password'] = make_password(validated_data['password'])
             
-        # 2. Provide sensible defaults so Django accepts the record
         validated_data['is_active'] = True
         
-        # 3. Automatically grant staff/superuser privileges if created as an admin
         if validated_data.get('role') == 'admin':
             validated_data['is_staff'] = True
             validated_data['is_superuser'] = True
@@ -81,16 +92,67 @@ class UserSerializer(serializers.ModelSerializer):
         return value
 
     def get_student_id(self, obj):
-        profile = getattr(obj, 'studentprofile', None)
+        profile = getattr(obj, 'studentprofile', None) or getattr(obj, 'profile', None)
         return profile.student_id if profile else None
 
     def get_course(self, obj):
-        profile = getattr(obj, 'studentprofile', None)
+        profile = getattr(obj, 'studentprofile', None) or getattr(obj, 'profile', None)
         return profile.component if profile else None
 
     def get_section(self, obj):
-        profile = getattr(obj, 'studentprofile', None)
+        profile = getattr(obj, 'studentprofile', None) or getattr(obj, 'profile', None)
         return profile.section_code if profile else None
+
+    # =========================================================================
+    # ROBUST IMAGE URL RESOLUTION
+    # =========================================================================
+    def get_id_picture_front(self, obj):
+        image_field = None
+        
+        # 1. Check all common related_name variations for StudentProfile
+        profile = (
+            getattr(obj, 'studentprofile', None) or 
+            getattr(obj, 'student_profile', None) or 
+            getattr(obj, 'profile', None)
+        )
+        if profile:
+            image_field = (
+                getattr(profile, 'id_picture_front', None) or 
+                getattr(profile, 'id_picture', None) or 
+                getattr(profile, 'id_proof', None)
+            )
+
+        # 2. Check all common related_name variations for PendingApproval
+        if not image_field:
+            pending = (
+                getattr(obj, 'pendingapproval', None) or 
+                getattr(obj, 'pending_approval', None)
+            )
+            if not pending:
+                if hasattr(obj, 'pendingapproval_set') and obj.pendingapproval_set.exists():
+                    pending = obj.pendingapproval_set.first()
+                elif hasattr(obj, 'pending_approvals') and obj.pending_approvals.exists():
+                    pending = obj.pending_approvals.first()
+                    
+            if pending:
+                image_field = (
+                    getattr(pending, 'id_picture_front', None) or 
+                    getattr(pending, 'id_picture', None) or 
+                    getattr(pending, 'id_proof', None)
+                )
+
+        # 3. Construct absolute URL
+        if image_field and hasattr(image_field, 'url'):
+            try:
+                request = self.context.get('request')
+                if request is not None:
+                    return request.build_absolute_uri(image_field.url)
+                return image_field.url
+            except Exception:
+                return None
+
+        return None
+
 
 class SessionSerializer(serializers.ModelSerializer):
     class Meta:

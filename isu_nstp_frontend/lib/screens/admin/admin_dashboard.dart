@@ -5,7 +5,7 @@ import '../login_screen.dart'; // Ensure this points one folder up to your login
 
 class AdminDashboard extends StatelessWidget {
   final UserModel user;
-  const AdminDashboard({Key? key, required this.user}) : super(key: key);
+  const AdminDashboard({super.key, required this.user});
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +95,7 @@ class AdminDashboard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 12.0),
           child: ListTile(
             leading: CircleAvatar(
-              backgroundColor: iconColor.withOpacity(0.15),
+              backgroundColor: iconColor.withValues(alpha: 0.15),
               child: Icon(icon, color: iconColor),
             ),
             title: Text(

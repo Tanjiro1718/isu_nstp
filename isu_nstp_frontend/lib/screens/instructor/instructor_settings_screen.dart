@@ -8,8 +8,7 @@ import '../../models/user_model.dart';
 
 class InstructorSettingsScreen extends StatefulWidget {
   final UserModel user;
-  const InstructorSettingsScreen({Key? key, required this.user})
-    : super(key: key);
+  const InstructorSettingsScreen({super.key, required this.user});
 
   @override
   _InstructorSettingsScreenState createState() =>
@@ -263,7 +262,7 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
-                      value: _selectedSemester,
+                      initialValue: _selectedSemester,
                       decoration: const InputDecoration(
                         labelText: 'Semester',
                         border: OutlineInputBorder(),

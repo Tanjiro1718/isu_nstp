@@ -556,7 +556,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                             onTap: hasPhoto ? () => _showExpandedImage(selfieUrl, studentName) : null,
                             child: CircleAvatar(
                               radius: 24, 
-                              backgroundColor: Colors.blueAccent.withOpacity(0.2),
+                              backgroundColor: Colors.blueAccent.withValues(alpha: 0.2),
                               backgroundImage: hasPhoto ? NetworkImage(selfieUrl) : null,
                               child: hasPhoto 
                                   ? null 

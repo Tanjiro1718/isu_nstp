@@ -27,4 +27,8 @@ router.register(r'users', UserViewSet, basename='user')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('attendance.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]
+
+# Serves uploaded ID images during development
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

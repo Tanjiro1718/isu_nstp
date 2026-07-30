@@ -5,7 +5,7 @@ import '../login_screen.dart';
 class DirectorDashboard extends StatelessWidget {
   final UserModel user;
   
-  const DirectorDashboard({Key? key, required this.user}) : super(key: key);
+  const DirectorDashboard({super.key, required this.user});
 
   @override
   Widget build(BuildContext context) {
@@ -129,7 +129,7 @@ class DirectorDashboard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 12.0),
           child: ListTile(
             leading: CircleAvatar(
-              backgroundColor: iconColor.withOpacity(0.15),
+              backgroundColor: iconColor.withValues(alpha: 0.15),
               child: Icon(icon, color: iconColor),
             ),
             title: Text(
