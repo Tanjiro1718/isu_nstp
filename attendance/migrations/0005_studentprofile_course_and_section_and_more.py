@@ -39,17 +39,12 @@ class Migration(migrations.Migration):
         ),
         migrations.AlterField(
             model_name='studentprofile',
-            name='section_code',
-            field=models.CharField(blank=True, max_length=20, null=True),
+            name='course_and_section',  # <-- Add the missing name parameter here
+            field=models.CharField(max_length=255, null=True),
         ),
         migrations.AlterField(
             model_name='studentprofile',
             name='user',
             field=models.OneToOneField(limit_choices_to={'role': 'student'}, on_delete=django.db.models.deletion.CASCADE, related_name='student_profile', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AlterField(
-            model_name='user',
-            name='campus',
-            field=models.CharField(blank=True, choices=[('echague', 'Echague (Main)'), ('cauayan', 'Cauayan'), ('ilagan', 'Ilagan'), ('cabagan', 'Cabagan')], max_length=30, null=True),
         ),
     ]

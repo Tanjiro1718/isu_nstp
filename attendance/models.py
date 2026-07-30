@@ -11,14 +11,7 @@ class User(AbstractUser):
         ('director', 'NSTP Director'),
         ('admin', 'System Admin'),
     )
-    CAMPUS_CHOICES = (
-        ('echague', 'Echague (Main)'),
-        ('cauayan', 'Cauayan'),
-        ('ilagan', 'Ilagan'),
-        ('cabagan', 'Cabagan'),
-    )
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='student')
-    campus = models.CharField(max_length=30, choices=CAMPUS_CHOICES, blank=True, null=True) # Made optional for initial registration
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='student') # Made optional for initial registration
     phone_number = models.CharField(max_length=15, blank=True, null=True)
 
 

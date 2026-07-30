@@ -42,14 +42,6 @@ class DirectorDashboard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              "NSTP Campus: ${user.campus.toUpperCase()}",
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.deepOrange.shade700,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
             const SizedBox(height: 4),
             const Text(
               "Oversee campus analytics, instructor compliance, and master records.",

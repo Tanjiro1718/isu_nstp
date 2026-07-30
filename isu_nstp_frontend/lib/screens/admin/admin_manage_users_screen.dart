@@ -58,7 +58,6 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
     String email,
     String password,
     String role,
-    String campus,
   ) async {
     try {
       final response = await http.post(
@@ -68,7 +67,6 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
           'email': email,
           'password': password,
           'role': role,
-          'campus': campus,
           'is_active': 'true',
         },
       );
@@ -216,8 +214,6 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
 
     String selectedRole = 'student';
     bool obscurePassword = true; 
-    String selectedCampus = 'echague';
-    final List<String> campusOptions = ['echague', 'cauayan', 'ilagan', 'cabagan'];
 
     showDialog(
       context: context,
@@ -280,14 +276,6 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                         onChanged: (value) => setStateDialog(() => selectedRole = value!),
                       ),
                       const SizedBox(height: 16),
-                      DropdownButtonFormField<String>(
-                        initialValue: selectedCampus,
-                        decoration: const InputDecoration(labelText: 'Campus'),
-                        items: campusOptions
-                            .map((campus) => DropdownMenuItem(value: campus, child: Text(campus.toUpperCase())))
-                            .toList(),
-                        onChanged: (value) => setStateDialog(() => selectedCampus = value!),
-                      ),
                     ],
                   ),
                 ),
@@ -306,7 +294,6 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                         emailController.text.trim(),
                         passwordController.text,
                         selectedRole,
-                        selectedCampus, 
                       );
                     }
                   },
@@ -385,7 +372,6 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                                 ],
                               ],
                             ),
-                            subtitle: Text("Role: ${(user['role'] ?? 'None').toString().toUpperCase()} | Campus: ${user['campus'] ?? 'N/A'}"),
                             trailing: cannotDelete
                                 ? const Tooltip(
                                     message: "Admin deletion is disabled to prevent system lockout.",

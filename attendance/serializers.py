@@ -28,7 +28,6 @@ class UserSerializer(serializers.ModelSerializer):
             'username',
             'email',
             'role',
-            'campus',
             'student_id',
             'course',
             'section',

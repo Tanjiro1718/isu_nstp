@@ -66,7 +66,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = json.decode(response.body);
-        final user = UserModel.fromJson(responseData['user']);
+
+        // 🛡️ Safe Extraction: Handle both nested 'user' key or direct user object
+        final Map<String, dynamic> userMap =
+            (responseData.containsKey('user') && responseData['user'] != null)
+                ? responseData['user'] as Map<String, dynamic>
+                : responseData;
+
+        // Construct UserModel safely using null-safe constructor
+        final user = UserModel.fromJson(userMap);
 
         _showSnackBar('Welcome back, ${user.username}!', isuGreen);
 
@@ -116,6 +124,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final Map<String, dynamic> errorData = json.decode(response.body);
       return errorData['message'] ??
           errorData['detail'] ??
+          errorData['error'] ??
           errorData['non_field_errors']?[0] ??
           'Invalid credentials.';
     } catch (_) {
