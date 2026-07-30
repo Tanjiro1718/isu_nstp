@@ -33,19 +33,22 @@ class RegisterView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, *args, **kwargs):
-        # 1. Grab all possible fields the frontend might be sending
+        # 1. Grab all fields sent from Flutter
         username = request.data.get('username', '').strip()
         email = request.data.get('email', '').strip().lower()
         password = request.data.get('password')
         id_picture_front = request.FILES.get('id_picture_front')
         
-        # Grab the extra profile fields
+        # Grab profile fields
         id_number = request.data.get('id_number', '').strip()
         course = request.data.get('course', '').strip()
         section = request.data.get('section', '').strip()
         course_and_section = request.data.get('course_and_section', '').strip()
+        
+        # 🔑 EXTRACT THE FCM DEVICE TOKEN
+        fcm_token = request.data.get('fcm_token', '').strip()
 
-        # Fallback: If frontend only sent id_number, use it as username
+        # Fallback
         if not username and id_number:
             username = id_number
             
@@ -58,7 +61,6 @@ class RegisterView(APIView):
         if User.objects.filter(email=email).exists():
             return Response({'detail': 'An account with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 🛡️ THE SAFETY BUBBLE
         try:
             with transaction.atomic():
                 # 1. SAVE THE USER 
@@ -70,14 +72,15 @@ class RegisterView(APIView):
                 user.set_password(password)
                 user.save()
 
-                # 2. SAVE THE STUDENT PROFILE (Now with all fields included!)
+                # 2. SAVE THE STUDENT PROFILE (Now saving fcm_token!)
                 StudentProfile.objects.create(
                     user=user,
-                    student_id=student_id_val,  # Maps to profile.student_id
-                    component=course,           # Maps to profile.component (Course)
-                    section_code=section,       # Maps to profile.section_code (Section)
+                    student_id=student_id_val,
+                    component=course,
+                    section_code=section,
                     course_and_section=course_and_section or f"{course} {section}".strip(),
-                    id_picture_front=id_picture_front
+                    id_picture_front=id_picture_front,
+                    fcm_token=fcm_token  # 👈 SAVED HERE NOW
                 )
         except Exception as e:
             print(f"\n❌ DATABASE CRASH: {str(e)}\n")
@@ -90,8 +93,6 @@ class RegisterView(APIView):
             defaults={'code': str(otp_code)}
         )
 
-        print(f"\n[REGISTERED] User: {email} | OTP: {otp_code}\n")
-
         # 4. SEND VERIFICATION EMAIL
         subject = f"{otp_code} is your ISU verification code"
         text_content = f"Your ISU verification code is: {otp_code}."
@@ -103,8 +104,6 @@ class RegisterView(APIView):
         except Exception as e:
             user.delete() 
             return Response({'detail': f'Failed to send email: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-from django.core.cache import cache
 
 class SendVerificationCodeAPIView(APIView):
     permission_classes = [AllowAny]
@@ -191,49 +190,110 @@ class VerifyOTPAPIView(APIView):
             return Response({'detail': 'No verification code requested for this email.'}, status=status.HTTP_400_BAD_REQUEST)
 
 class ApproveRejectUserView(views.APIView):
-    
-    # PATCH /api/users/<id>/
+    permission_classes = [AllowAny]
+
+    # PATCH /api/users/<id>/ -> Approve User
     def patch(self, request, pk):
         try:
             user = User.objects.get(pk=pk)
-            is_active = request.data.get('is_active', False)
+
+            # 1. SAFELY PARSE BOOLEAN (Handles bool, "true", "True", 1, etc.)
+            raw_is_active = request.data.get('is_active', False)
+            if isinstance(raw_is_active, bool):
+                is_active = raw_is_active
+            else:
+                is_active = str(raw_is_active).strip().lower() in ['true', '1', 'yes', 't']
+
             user.is_active = is_active
             user.save()
 
-            # Retrieve FCM token (Checking 'student_profile' matching your model's related_name)
+            # Retrieve FCM token if profile exists
             profile = (
                 getattr(user, 'student_profile', None) or 
                 getattr(user, 'studentprofile', None) or 
                 getattr(user, 'profile', None)
             )
-            fcm_token = profile.fcm_token if profile else None
+            fcm_token = getattr(profile, 'fcm_token', None) if profile else None
 
-            if is_active and fcm_token:
-                send_approval_notification(fcm_token, is_approved=True, username=user.username)
+            if is_active:
+                # A. Send Push Notification (FCM)
+                if fcm_token:
+                    try:
+                        send_approval_notification(fcm_token, is_approved=True, username=user.username)
+                    except Exception as fcm_err:
+                        print(f"⚠️ FCM failed: {fcm_err}")
 
-            return Response({'message': 'User approved successfully.'}, status=status.HTTP_200_OK)
+                # B. Send Email Notification
+                if user.email:
+                    subject = "Account Approved - ISU NSTP Dashboard"
+                    text_content = (
+                        f"Hello {user.username},\n\n"
+                        f"Great news! Your account registration for the ISU NSTP Dashboard has been approved. "
+                        f"You can now log into the app using your credentials.\n\n"
+                        f"Thank you!"
+                    )
+                    try:
+                        msg = EmailMultiAlternatives(
+                            subject, 
+                            text_content, 
+                            getattr(settings, 'DEFAULT_FROM_EMAIL'), 
+                            [user.email]
+                        )
+                        msg.send()
+                        print(f"✅ Approval email sent to {user.email}")
+                    except Exception as email_err:
+                        print(f"❌ Failed to send approval email to {user.email}: {email_err}")
+
+            return Response({'message': f'User status updated to is_active={is_active}'}, status=status.HTTP_200_OK)
+
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    # DELETE /api/users/<id>/
+    # DELETE /api/users/<id>/ -> Reject & Delete User
     def delete(self, request, pk):
         try:
             user = User.objects.get(pk=pk)
-            
+
             # Retrieve FCM token before deleting user
             profile = (
                 getattr(user, 'student_profile', None) or 
                 getattr(user, 'studentprofile', None) or 
                 getattr(user, 'profile', None)
             )
-            fcm_token = profile.fcm_token if profile else None
+            fcm_token = getattr(profile, 'fcm_token', None) if profile else None
 
-            # Send rejection notification
+            # A. Send Push Notification (FCM)
             if fcm_token:
-                send_approval_notification(fcm_token, is_approved=False, username=user.username)
-            
+                try:
+                    send_approval_notification(fcm_token, is_approved=False, username=user.username)
+                except Exception as fcm_err:
+                    print(f"⚠️ FCM failed: {fcm_err}")
+
+            # B. Send Rejection Email Notification (Sent BEFORE deleting from database)
+            if user.email:
+                subject = "Registration Request Status - ISU NSTP Dashboard"
+                text_content = (
+                    f"Hello {user.username},\n\n"
+                    f"We regret to inform you that your registration request for the ISU NSTP Dashboard "
+                    f"was declined by the administrator.\n\n"
+                    f"If you believe this was a mistake, please contact your instructor or the NSTP office."
+                )
+                try:
+                    msg = EmailMultiAlternatives(
+                        subject, 
+                        text_content, 
+                        getattr(settings, 'DEFAULT_FROM_EMAIL'), 
+                        [user.email]
+                    )
+                    msg.send()
+                    print(f"✅ Rejection email sent to {user.email}")
+                except Exception as email_err:
+                    print(f"❌ Failed to send rejection email to {user.email}: {email_err}")
+
+            # Delete the user after sending notification
             user.delete()
-            return Response({'message': 'User rejected and deleted.'}, status=status.HTTP_204_NO_CONTENT)
+            return Response({'message': 'User rejected and removed from database.'}, status=status.HTTP_200_OK)
+
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 

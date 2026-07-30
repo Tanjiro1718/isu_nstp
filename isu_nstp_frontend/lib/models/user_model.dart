@@ -4,8 +4,7 @@ class UserModel {
   final String email;
   final String role;
   final String? studentId;
-  final String? course;
-  final String? section;
+  final String? courseAndSection;
   final String? token;
 
   UserModel({
@@ -14,8 +13,7 @@ class UserModel {
     required this.email,
     this.role = 'student',
     this.studentId,
-    this.course,
-    this.section,
+    this.courseAndSection,
     this.token,
   });
 
@@ -31,18 +29,16 @@ class UserModel {
     }
 
     return UserModel(
-      // Safely parse ID whether backend sends String or int
       id: json['id'] is int
           ? json['id'] as int
           : int.tryParse(json['id']?.toString() ?? '0') ?? 0,
       username: json['username']?.toString() ?? '',
       email: json['email']?.toString() ?? '',
       role: json['role']?.toString() ?? 'student',
-      
-      // Flexible key lookups for varying Django response formats
       studentId: (json['student_id'] ?? json['studentId'])?.toString(),
-      course: (json['course'] ?? json['department'] ?? json['course_and_section'])?.toString(),
-      section: (json['section'] ?? json['section_code'])?.toString(),
+      
+      // Capture the single field from backend
+      courseAndSection: json['course_and_section']?.toString(), 
       token: json['token']?.toString(),
     );
   }
@@ -55,8 +51,7 @@ class UserModel {
       'email': email,
       'role': role,
       'student_id': studentId,
-      'course': course,
-      'section': section,
+      'course_and_section': courseAndSection,
       'token': token,
     };
   }
@@ -68,8 +63,7 @@ class UserModel {
     String? email,
     String? role,
     String? studentId,
-    String? course,
-    String? section,
+    String? courseAndSection,
     String? token,
   }) {
     return UserModel(
@@ -78,8 +72,7 @@ class UserModel {
       email: email ?? this.email,
       role: role ?? this.role,
       studentId: studentId ?? this.studentId,
-      course: course ?? this.course,
-      section: section ?? this.section,
+      courseAndSection: courseAndSection ?? this.courseAndSection,
       token: token ?? this.token,
     );
   }

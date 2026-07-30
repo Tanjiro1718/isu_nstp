@@ -142,14 +142,12 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 
-# System Sender Account 
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'tristhanilarde1718@gmail.com')
-
-# 16-character Google App Password 
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', 'ybfesxtmzrfayhdu')
+# Load strictly from .env file
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 
 # Default display name and sender email
-DEFAULT_FROM_EMAIL = f'ISU Verification <{EMAIL_HOST_USER}>'
+DEFAULT_FROM_EMAIL = f'ISU NSTP Support <{EMAIL_HOST_USER}>' if EMAIL_HOST_USER else 'ISU NSTP Support'
 
 # Force Django to save cache/OTPs to disk so all threads share it
 CACHES = {

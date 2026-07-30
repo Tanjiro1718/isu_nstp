@@ -46,11 +46,10 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False, allow_blank=True)
-    
-    # Change these to CharFields to accept input during Registration/POST
+    role = serializers.SerializerMethodField()
+    id_picture_front = serializers.SerializerMethodField()
     student_id = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
-    course = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
-    section = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
+    course_and_section = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
 
     class Meta:
         model = User
@@ -60,8 +59,7 @@ class UserSerializer(serializers.ModelSerializer):
             'email',
             'role',
             'student_id',
-            'course',
-            'section',
+            'course_and_section',
             'password',
             'is_active',
             'id_picture_front',
@@ -69,23 +67,14 @@ class UserSerializer(serializers.ModelSerializer):
         extra_kwargs = {'password': {'write_only': True}}
 
     def to_representation(self, instance):
-        """Override this to manually append the read-only values to the GET response."""
         rep = super().to_representation(instance)
-        
-        # Resolve Profile fields
         profile = self._get_student_profile(instance)
         rep['student_id'] = profile.student_id if profile else None
-        rep['course'] = profile.component if profile else None
-        rep['section'] = profile.section_code if profile else None
-        
-        # Resolve Methods
-        rep['role'] = self.get_role(instance)
-        rep['id_picture_front'] = self.get_id_picture_front(instance)
+        rep['course_and_section'] = profile.component if profile else None
         
         return rep
 
     def _get_student_profile(self, obj):
-        """Helper to robustly fetch student profile regardless of related_name."""
         return (
             getattr(obj, 'student_profile', None) or 
             getattr(obj, 'studentprofile', None) or 
@@ -124,12 +113,9 @@ class UserSerializer(serializers.ModelSerializer):
         return None
 
     def create(self, validated_data):
-        # 1. Pop the registration data out so it doesn't crash the base User creation
         student_id = validated_data.pop('student_id', None)
-        course = validated_data.pop('course', None)
-        section = validated_data.pop('section', None)
+        course_and_section = validated_data.pop('course_and_section', None)
 
-        # 2. Handle base user fields
         if 'password' in validated_data:
             validated_data['password'] = make_password(validated_data['password'])
             
@@ -139,16 +125,14 @@ class UserSerializer(serializers.ModelSerializer):
             validated_data['is_staff'] = True
             validated_data['is_superuser'] = True
             
-        # 3. Create the User
         user = super().create(validated_data)
 
-        # 4. IMMEDIATELY create the StudentProfile using the provided inputs
         if user.role == 'student':
             StudentProfile.objects.create(
                 user=user,
                 student_id=student_id or f'{user.username}-{user.id}',
-                component=course or 'CWTS',
-                section_code=section or 'CWTS-1A'
+                component=course_and_section or 'N/A', # Save exactly what was typed here
+                section_code='' # Leave blank since it is merged
             )
 
         return user
@@ -156,8 +140,7 @@ class UserSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
         student_id = validated_data.pop('student_id', None)
-        course = validated_data.pop('course', None)
-        section = validated_data.pop('section', None)
+        course_and_section = validated_data.pop('course_and_section', None)
 
         if password:
             instance.password = make_password(password)
@@ -167,19 +150,17 @@ class UserSerializer(serializers.ModelSerializer):
 
         instance.save()
 
-        # Update profile if any profile fields were sent
-        if instance.role == 'student' and any(v is not None for v in (student_id, course, section)):
+        if instance.role == 'student' and any(v is not None for v in (student_id, course_and_section)):
             profile, _ = StudentProfile.objects.get_or_create(
                 user=instance,
                 defaults={
                     'student_id': student_id or f'{instance.username}-{instance.id}',
-                    'component': course or 'CWTS',
-                    'section_code': section or 'CWTS-1A',
+                    'component': course_and_section or 'N/A',
+                    'section_code': '',
                 },
             )
             if student_id is not None: profile.student_id = student_id
-            if course is not None: profile.component = course
-            if section is not None: profile.section_code = section
+            if course_and_section is not None: profile.component = course_and_section
             profile.save()
 
         return instance

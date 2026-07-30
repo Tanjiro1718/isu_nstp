@@ -174,14 +174,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 const Divider(height: 1),
                 _buildReadOnlyTile(
                   icon: Icons.school,
-                  label: 'Course / Component',
-                  value: _currentUser.course ?? 'Not assigned',
-                ),
-                const Divider(height: 1),
-                _buildReadOnlyTile(
-                  icon: Icons.class_,
-                  label: 'Section',
-                  value: _currentUser.section ?? 'Not assigned',
+                  label: 'Course & Section',
+                  value: _currentUser.courseAndSection ?? 'Not assigned',
                 ),
                 const Divider(height: 1),
                 _buildReadOnlyTile(
