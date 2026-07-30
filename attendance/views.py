@@ -19,7 +19,7 @@ from .models import OTPVerification
 from django.db import transaction
 from rest_framework import status, views
 from .fcm_utils import send_approval_notification
-
+from rest_framework.permissions import IsAuthenticated
 
 User = get_user_model()
 
@@ -467,6 +467,10 @@ class UserViewSet(viewsets.ModelViewSet):
         elif is_active == 'false':
             # Returns ONLY pending users
             return queryset.filter(is_active=False)
+
+        role = self.request.query_params.get('role')
+        if role:
+            queryset = queryset.filter(role=role)
             
         # If Flutter doesn't ask, return everyone
         return queryset

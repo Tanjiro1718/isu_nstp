@@ -1,6 +1,10 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from .models import User, AttendanceSession, AttendanceRecord, StudentProfile, SystemSettings
+from django.contrib.auth import get_user_model
+from .models import StudentProfile
+
+User = get_user_model()
 
 class RegisterSerializer(serializers.ModelSerializer):
     # Support common field name keys from the frontend
@@ -26,25 +30,27 @@ class RegisterSerializer(serializers.ModelSerializer):
         component_val = validated_data.pop('component', None) or validated_data.pop('course', None)
         section_code_val = validated_data.pop('section_code', None) or validated_data.pop('section', None)
 
-        user = User.objects.create_user(**validated_data)
+        user = User.objects.create_user(...)
 
-        # Update or create using the exact model field names expected by UserSerializer
+        # Fetch the profile created by the signal and update its fields
         StudentProfile.objects.update_or_create(
             user=user,
             defaults={
-                'student_id': student_id_val,
-                'component': component_val,
-                'section_code': section_code_val,
+                'student_id': student_id,
+                'course_and_section': course_and_section,
+                'component': component,
+                'section_code': section_code,
+                'id_picture_front': id_picture_front,
             }
         )
-        return user
 
 class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False, allow_blank=True)
-    student_id = serializers.SerializerMethodField()
-    course = serializers.SerializerMethodField()
-    section = serializers.SerializerMethodField()
-    id_picture_front = serializers.SerializerMethodField()
+    
+    # Change these to CharFields to accept input during Registration/POST
+    student_id = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
+    course = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
+    section = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
 
     class Meta:
         model = User
@@ -62,7 +68,68 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {'password': {'write_only': True}}
 
+    def to_representation(self, instance):
+        """Override this to manually append the read-only values to the GET response."""
+        rep = super().to_representation(instance)
+        
+        # Resolve Profile fields
+        profile = self._get_student_profile(instance)
+        rep['student_id'] = profile.student_id if profile else None
+        rep['course'] = profile.component if profile else None
+        rep['section'] = profile.section_code if profile else None
+        
+        # Resolve Methods
+        rep['role'] = self.get_role(instance)
+        rep['id_picture_front'] = self.get_id_picture_front(instance)
+        
+        return rep
+
+    def _get_student_profile(self, obj):
+        """Helper to robustly fetch student profile regardless of related_name."""
+        return (
+            getattr(obj, 'student_profile', None) or 
+            getattr(obj, 'studentprofile', None) or 
+            getattr(obj, 'profile', None)
+        )
+
+    def get_role(self, obj):
+        if hasattr(obj, 'role') and obj.role:
+            return str(obj.role).lower()
+        if getattr(obj, 'is_superuser', False) or getattr(obj, 'is_staff', False):
+            return 'admin'
+        return 'student'
+
+    def get_id_picture_front(self, obj):
+        image_field = None
+        profile = self._get_student_profile(obj)
+        
+        if profile:
+            image_field = getattr(profile, 'id_picture_front', None) or getattr(profile, 'id_picture', None) or getattr(profile, 'id_proof', None)
+
+        if not image_field:
+            pending = getattr(obj, 'pendingapproval', None) or getattr(obj, 'pending_approval', None)
+            if not pending and hasattr(obj, 'pendingapproval_set') and obj.pendingapproval_set.exists():
+                pending = obj.pendingapproval_set.first()
+            if pending:
+                image_field = getattr(pending, 'id_picture_front', None) or getattr(pending, 'id_picture', None)
+
+        if image_field and hasattr(image_field, 'url'):
+            try:
+                request = self.context.get('request')
+                if request is not None:
+                    return request.build_absolute_uri(image_field.url)
+                return image_field.url
+            except Exception:
+                return None
+        return None
+
     def create(self, validated_data):
+        # 1. Pop the registration data out so it doesn't crash the base User creation
+        student_id = validated_data.pop('student_id', None)
+        course = validated_data.pop('course', None)
+        section = validated_data.pop('section', None)
+
+        # 2. Handle base user fields
         if 'password' in validated_data:
             validated_data['password'] = make_password(validated_data['password'])
             
@@ -72,13 +139,25 @@ class UserSerializer(serializers.ModelSerializer):
             validated_data['is_staff'] = True
             validated_data['is_superuser'] = True
             
-        return super().create(validated_data)
+        # 3. Create the User
+        user = super().create(validated_data)
+
+        # 4. IMMEDIATELY create the StudentProfile using the provided inputs
+        if user.role == 'student':
+            StudentProfile.objects.create(
+                user=user,
+                student_id=student_id or f'{user.username}-{user.id}',
+                component=course or 'CWTS',
+                section_code=section or 'CWTS-1A'
+            )
+
+        return user
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
         student_id = validated_data.pop('student_id', None)
-        course = validated_data.pop('course', validated_data.pop('department', None))
-        section = validated_data.pop('section', validated_data.pop('section_code', None))
+        course = validated_data.pop('course', None)
+        section = validated_data.pop('section', None)
 
         if password:
             instance.password = make_password(password)
@@ -88,9 +167,8 @@ class UserSerializer(serializers.ModelSerializer):
 
         instance.save()
 
-        if instance.role == 'student' and any(
-            value is not None for value in (student_id, course, section)
-        ):
+        # Update profile if any profile fields were sent
+        if instance.role == 'student' and any(v is not None for v in (student_id, course, section)):
             profile, _ = StudentProfile.objects.get_or_create(
                 user=instance,
                 defaults={
@@ -99,83 +177,12 @@ class UserSerializer(serializers.ModelSerializer):
                     'section_code': section or 'CWTS-1A',
                 },
             )
-
-            if student_id is not None:
-                profile.student_id = student_id
-            if course is not None:
-                profile.component = course
-            if section is not None:
-                profile.section_code = section
+            if student_id is not None: profile.student_id = student_id
+            if course is not None: profile.component = course
+            if section is not None: profile.section_code = section
             profile.save()
 
         return instance
-
-    def validate_email(self, value):
-        if value and not value.lower().endswith('@isu.edu.ph'):
-            raise serializers.ValidationError('Email must end with @isu.edu.ph')
-        return value
-
-    def get_student_id(self, obj):
-        profile = getattr(obj, 'studentprofile', None) or getattr(obj, 'profile', None)
-        return profile.student_id if profile else None
-
-    def get_course(self, obj):
-        profile = getattr(obj, 'studentprofile', None) or getattr(obj, 'profile', None)
-        return profile.component if profile else None
-
-    def get_section(self, obj):
-        profile = getattr(obj, 'studentprofile', None) or getattr(obj, 'profile', None)
-        return profile.section_code if profile else None
-
-    # =========================================================================
-    # ROBUST IMAGE URL RESOLUTION
-    # =========================================================================
-    def get_id_picture_front(self, obj):
-        image_field = None
-        
-        # 1. Check all common related_name variations for StudentProfile
-        profile = (
-            getattr(obj, 'studentprofile', None) or 
-            getattr(obj, 'student_profile', None) or 
-            getattr(obj, 'profile', None)
-        )
-        if profile:
-            image_field = (
-                getattr(profile, 'id_picture_front', None) or 
-                getattr(profile, 'id_picture', None) or 
-                getattr(profile, 'id_proof', None)
-            )
-
-        # 2. Check all common related_name variations for PendingApproval
-        if not image_field:
-            pending = (
-                getattr(obj, 'pendingapproval', None) or 
-                getattr(obj, 'pending_approval', None)
-            )
-            if not pending:
-                if hasattr(obj, 'pendingapproval_set') and obj.pendingapproval_set.exists():
-                    pending = obj.pendingapproval_set.first()
-                elif hasattr(obj, 'pending_approvals') and obj.pending_approvals.exists():
-                    pending = obj.pending_approvals.first()
-                    
-            if pending:
-                image_field = (
-                    getattr(pending, 'id_picture_front', None) or 
-                    getattr(pending, 'id_picture', None) or 
-                    getattr(pending, 'id_proof', None)
-                )
-
-        # 3. Construct absolute URL
-        if image_field and hasattr(image_field, 'url'):
-            try:
-                request = self.context.get('request')
-                if request is not None:
-                    return request.build_absolute_uri(image_field.url)
-                return image_field.url
-            except Exception:
-                return None
-
-        return None
 
 
 class SessionSerializer(serializers.ModelSerializer):

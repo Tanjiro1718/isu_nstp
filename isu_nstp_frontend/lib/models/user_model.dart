@@ -12,7 +12,7 @@ class UserModel {
     required this.id,
     required this.username,
     required this.email,
-    required this.role,
+    this.role = 'student',
     this.studentId,
     this.course,
     this.section,

@@ -339,8 +339,15 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                         final user = _users[index];
 
                         bool isSelf = widget.currentUser != null && user['username'] == widget.currentUser!.username;
-                        bool isAdminRole = (user['role'] ?? '').toString().toLowerCase() == 'admin';
+                        String role = (user['role'] ?? 'Unknown').toString().toLowerCase();
+                        bool isAdminRole = role == 'admin';
                         bool cannotDelete = isSelf || isAdminRole;
+
+                        // Display strings for extra details
+                        String displayRole = role.toUpperCase();
+                        String? studentId = user['student_id'];
+                        String? course = user['course'];
+                        String? section = user['section'];
 
                         return Card(
                           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -355,21 +362,30 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                             title: Row(
                               children: [
                                 Text(user['username'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                if (isSelf) ...[
-                                  const SizedBox(width: 8),
+                                const SizedBox(width: 8),
+                                if (isSelf) 
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(color: Colors.blue, borderRadius: BorderRadius.circular(4)),
                                     child: const Text("YOU", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                  ),
-                                ] else if (isAdminRole) ...[
-                                  const SizedBox(width: 8),
+                                  )
+                                else 
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(color: Colors.grey.shade700, borderRadius: BorderRadius.circular(4)),
-                                    child: const Text("ADMIN", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    decoration: BoxDecoration(
+                                      color: isAdminRole ? Colors.grey.shade700 : Colors.deepPurple.shade300, 
+                                      borderRadius: BorderRadius.circular(4)
+                                    ),
+                                    child: Text(displayRole, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                                   ),
-                                ],
+                              ],
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(user['email'] ?? 'No email provided', style: const TextStyle(fontSize: 12)),
+                                if (role == 'student' && studentId != null)
+                                  Text('ID: $studentId | $course - $section', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
                               ],
                             ),
                             trailing: cannotDelete
@@ -433,13 +449,14 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                             final username = user['username'] ?? 'Unknown ID';
                             final email = user['email'] ?? 'No Email';
                             
-                            // Parse image path cleanly
-                            String? rawImageUrl = user['id_picture_front'] ?? user['id_picture'] ?? user['id_proof'];
+                            // Rely strictly on Django's new robust image URL handling
+                            String? rawImageUrl = user['id_picture_front'];
                             String? finalImageUrl;
 
                             if (rawImageUrl != null && rawImageUrl.toString().trim().isNotEmpty) {
                               finalImageUrl = rawImageUrl.toString().trim();
                               
+                              // Fallback string manipulation just in case Django didn't build the absolute URI correctly
                               if (!finalImageUrl.startsWith('http')) {
                                 if (!finalImageUrl.startsWith('/')) {
                                   finalImageUrl = '/$finalImageUrl';
@@ -472,6 +489,14 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(email, style: TextStyle(color: Colors.grey.shade700)),
+                                    
+                                    // Display course/section data if available
+                                    if (user['course'] != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4.0),
+                                        child: Text('${user['course']} - ${user['section'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w500)),
+                                      ),
+                                    
                                     const Divider(height: 24),
                                     
                                     Row(

@@ -4,6 +4,8 @@ from django.utils import timezone
 import datetime
 from django.dispatch import receiver
 from django.db.models.signals import post_save
+from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 
 # 1. Custom User Model to differentiate the 4 distinct roles
 class User(AbstractUser):
@@ -28,36 +30,37 @@ class InstructorProfile(models.Model):
 
 # 3. Student Profile containing their specific NSTP configuration & registration status
 class StudentProfile(models.Model):
-    COMPONENT_CHOICES = (('CWTS', 'CWTS'), ('LTS', 'LTS'), ('ROTC', 'ROTC'))
-    
+    COMPONENT_CHOICES = (
+        ('CWTS', 'CWTS'),
+        ('LTS', 'LTS'),
+        ('ROTC', 'ROTC'),
+    )
+
     user = models.OneToOneField(
-        User, 
-        on_delete=models.CASCADE, 
-        related_name='student_profile', 
+        User,
+        on_delete=models.CASCADE,
+        related_name='student_profile',
         limit_choices_to={'role': 'student'}
     )
-    student_id = models.CharField(max_length=20, unique=True) # e.g., 21-12345
-    course_and_section = models.CharField(max_length=100, blank=True, null=True) # e.g., BSIT-NS 1A (NEW)
-    
-    # Made optional during initial registration (assigned by admin/director later)
-    component = models.CharField(max_length=10, choices=COMPONENT_CHOICES, blank=True, null=True) 
+    # Made null=True & blank=True to prevent database crashes during initial signal creation
+    student_id = models.CharField(max_length=20, unique=True, null=True, blank=True) # e.g., 21-12345
+    course_and_section = models.CharField(max_length=100, blank=True, null=True) # e.g., BSIT-NS 1A
+
+    # Assigned by admin/director later or optional during registration
+    component = models.CharField(max_length=10, choices=COMPONENT_CHOICES, blank=True, null=True)
     section_code = models.CharField(max_length=20, blank=True, null=True) # e.g., CWTS-1A
-    
-    # --- Registration Verification & Approval Status (NEW) ---
+
+    # --- Registration Verification & Approval Status ---
     id_picture_front = models.ImageField(upload_to='student_ids/', blank=True, null=True)
     is_email_verified = models.BooleanField(default=False)
     is_approved_by_admin = models.BooleanField(default=False)
 
-    # --- Push Notifications (NEW) ---
-    fcm_token = models.CharField(max_length=255, blank=True, null=True)
+    # --- Push Notifications ---
+    fcm_token = models.CharField(max_length=512, blank=True, null=True)
 
     def __str__(self):
-        return f"Student: {self.student_id} - {self.course_and_section or 'Unassigned'}"
-
-    @receiver(post_save, sender=User)
-    def create_student_profile(sender, instance, created, **kwargs):
-        if created:
-            StudentProfile.objects.get_or_create(user=instance)
+        display_id = self.student_id or self.user.username
+        return f"Student: {display_id} - {self.course_and_section or 'Unassigned'}"
 
 
 # 4. Attendance Session created by Instructors
