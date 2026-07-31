@@ -194,15 +194,22 @@ class ApproveRejectUserView(views.APIView):
 
     # PATCH /api/users/<id>/ -> Approve User
     def patch(self, request, pk):
+        # 🔍 ADD THIS DEBUG PRINT AT THE VERY TOP
+        print(f"\n🔍 DEBUG PATCH REQUEST DATA: {request.data}")
+
         try:
             user = User.objects.get(pk=pk)
 
-            # 1. SAFELY PARSE BOOLEAN (Handles bool, "true", "True", 1, etc.)
+            # Safely parse boolean
             raw_is_active = request.data.get('is_active', False)
+            print(f"🔍 DEBUG RAW is_active: {raw_is_active} (Type: {type(raw_is_active)})")
+
             if isinstance(raw_is_active, bool):
                 is_active = raw_is_active
             else:
                 is_active = str(raw_is_active).strip().lower() in ['true', '1', 'yes', 't']
+
+            print(f"🔍 DEBUG PARSED is_active: {is_active}")
 
             user.is_active = is_active
             user.save()
@@ -214,14 +221,18 @@ class ApproveRejectUserView(views.APIView):
                 getattr(user, 'profile', None)
             )
             fcm_token = getattr(profile, 'fcm_token', None) if profile else None
+            print(f"🔍 DEBUG USER EMAIL: {user.email} | FCM TOKEN: {fcm_token}")
 
             if is_active:
                 # A. Send Push Notification (FCM)
                 if fcm_token:
                     try:
                         send_approval_notification(fcm_token, is_approved=True, username=user.username)
+                        print("✅ FCM Notification Sent!")
                     except Exception as fcm_err:
-                        print(f"⚠️ FCM failed: {fcm_err}")
+                        print(f"❌ FCM failed: {fcm_err}")
+                else:
+                    print("⚠️ FCM Skipped: No fcm_token found for this user.")
 
                 # B. Send Email Notification
                 if user.email:
@@ -243,6 +254,8 @@ class ApproveRejectUserView(views.APIView):
                         print(f"✅ Approval email sent to {user.email}")
                     except Exception as email_err:
                         print(f"❌ Failed to send approval email to {user.email}: {email_err}")
+                else:
+                    print("⚠️ Email Skipped: User has no email address.")
 
             return Response({'message': f'User status updated to is_active={is_active}'}, status=status.HTTP_200_OK)
 
@@ -515,26 +528,115 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
 
     def get_queryset(self):
-        # Start with everyone
         queryset = User.objects.all().order_by('-date_joined')
         
-        # Check if Flutter is asking for a specific group
         is_active = self.request.query_params.get('is_active')
-        
         if is_active == 'true':
-            # Returns ONLY approved users
             return queryset.filter(is_active=True)
         elif is_active == 'false':
-            # Returns ONLY pending users
             return queryset.filter(is_active=False)
 
         role = self.request.query_params.get('role')
         if role:
             queryset = queryset.filter(role=role)
             
-        # If Flutter doesn't ask, return everyone
         return queryset
 
+    # 🔑 TRIGGERED WHEN ADMIN APPROVES (PATCH /api/users/<id>/)
+    def perform_update(self, serializer):
+        # 1. Get user state BEFORE update
+        instance = self.get_object()
+        was_active = instance.is_active
+
+        # 2. Save update
+        updated_user = serializer.save()
+
+        # 3. If user was changed from inactive -> active, send notifications!
+        if not was_active and updated_user.is_active:
+            print(f"\n🎉 [APPROVAL DETECTED] Processing approval for: {updated_user.username}")
+
+            # Retrieve FCM Token
+            profile = (
+                getattr(updated_user, 'student_profile', None) or 
+                getattr(updated_user, 'studentprofile', None) or 
+                getattr(updated_user, 'profile', None)
+            )
+            fcm_token = getattr(profile, 'fcm_token', None) if profile else None
+
+            # A. Send Push Notification
+            if fcm_token:
+                try:
+                    send_approval_notification(fcm_token, is_approved=True, username=updated_user.username)
+                    print(f"✅ FCM Push Notification sent to {updated_user.username}")
+                except Exception as fcm_err:
+                    print(f"❌ FCM Notification failed: {fcm_err}")
+            else:
+                print("⚠️ FCM Skipped: Student has no fcm_token saved in profile.")
+
+            # B. Send Email Notification
+            if updated_user.email:
+                subject = "Account Approved - ISU NSTP Dashboard"
+                text_content = (
+                    f"Hello {updated_user.username},\n\n"
+                    f"Great news! Your account registration for the ISU NSTP Dashboard has been approved. "
+                    f"You can now log into the app using your credentials.\n\n"
+                    f"Thank you!"
+                )
+                try:
+                    msg = EmailMultiAlternatives(
+                        subject, 
+                        text_content, 
+                        getattr(settings, 'DEFAULT_FROM_EMAIL'), 
+                        [updated_user.email]
+                    )
+                    msg.send()
+                    print(f"✅ Approval Email successfully sent to {updated_user.email}")
+                except Exception as email_err:
+                    print(f"❌ Approval Email failed to send: {email_err}")
+
+    # 🔑 TRIGGERED WHEN ADMIN REJECTS (DELETE /api/users/<id>/)
+    def perform_destroy(self, instance):
+        print(f"\n❌ [REJECTION DETECTED] Processing rejection for: {instance.username}")
+
+        # Retrieve FCM Token before user is deleted
+        profile = (
+            getattr(instance, 'student_profile', None) or 
+            getattr(instance, 'studentprofile', None) or 
+            getattr(instance, 'profile', None)
+        )
+        fcm_token = getattr(profile, 'fcm_token', None) if profile else None
+
+        # A. Send Push Notification
+        if fcm_token:
+            try:
+                send_approval_notification(fcm_token, is_approved=False, username=instance.username)
+                print(f"✅ Rejection Push Notification sent to {instance.username}")
+            except Exception as fcm_err:
+                print(f"❌ FCM Notification failed: {fcm_err}")
+
+        # B. Send Rejection Email
+        if instance.email:
+            subject = "Registration Request Status - ISU NSTP Dashboard"
+            text_content = (
+                f"Hello {instance.username},\n\n"
+                f"We regret to inform you that your registration request for the ISU NSTP Dashboard "
+                f"was declined by the administrator.\n\n"
+                f"If you believe this was a mistake, please contact your instructor or the NSTP office."
+            )
+            try:
+                msg = EmailMultiAlternatives(
+                    subject, 
+                    text_content, 
+                    getattr(settings, 'DEFAULT_FROM_EMAIL'), 
+                    [instance.email]
+                )
+                msg.send()
+                print(f"✅ Rejection Email successfully sent to {instance.email}")
+            except Exception as email_err:
+                print(f"❌ Rejection Email failed to send: {email_err}")
+
+        # Delete from database
+        instance.delete()
 
 class SystemSettingsAPIView(APIView):
     def get(self, request):
