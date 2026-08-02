@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -5,6 +7,7 @@ import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
 import '../../config/api_config.dart';
 import '../../models/user_model.dart'; // Import your user model!
+import '../../widgets/location_guidance_card.dart';
 
 class StudentCheckInScreen extends StatefulWidget {
   final UserModel user; // Added this so the screen knows who is checking in
@@ -13,6 +16,10 @@ class StudentCheckInScreen extends StatefulWidget {
   final double targetLng;
   final int allowedRadiusMeters;
 
+  /// Absolute moment the photo window shuts. Passing null hides the countdown,
+  /// which keeps older callers working unchanged.
+  final DateTime? photoDeadline;
+
   const StudentCheckInScreen({
     super.key,
     required this.user,
@@ -20,6 +27,7 @@ class StudentCheckInScreen extends StatefulWidget {
     required this.targetLat,
     required this.targetLng,
     required this.allowedRadiusMeters,
+    this.photoDeadline,
   });
 
   @override
@@ -34,11 +42,58 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
   double _distanceFromTarget = -1.0;
   String _statusMessage = "Ready for check-in";
 
+  // --- Photo submission window ---
+  Timer? _countdownTimer;
+  Duration _timeLeft = Duration.zero;
+
+  // Keeps the walking guidance live while the student is on their way over.
+  Timer? _locationPoller;
+
+  bool get _hasDeadline => widget.photoDeadline != null;
+  bool get _windowExpired => _hasDeadline && _timeLeft <= Duration.zero;
+
   @override
   void initState() {
     super.initState();
     // Start our sequence so they don't trip over each other
     _initializeSequentially();
+    _startCountdown();
+    _startLocationUpdates();
+  }
+
+  /// Re-reads the GPS every 10 seconds so the arrow and the remaining distance
+  /// update while the student walks, instead of only on a manual refresh.
+  void _startLocationUpdates() {
+    _locationPoller = Timer.periodic(const Duration(seconds: 10), (_) {
+      // Skip while a check-in is mid-flight so we don't fight over _isLoading.
+      if (!_isLoading) _determinePosition(silent: true);
+    });
+  }
+
+  /// Ticks once a second so the student can see how long they have left to
+  /// submit their photo before the window closes.
+  void _startCountdown() {
+    if (!_hasDeadline) return;
+
+    void tick() {
+      final remaining = widget.photoDeadline!.difference(DateTime.now());
+      if (!mounted) return;
+      setState(() {
+        _timeLeft = remaining.isNegative ? Duration.zero : remaining;
+      });
+      if (remaining.isNegative) {
+        _countdownTimer?.cancel();
+      }
+    }
+
+    tick();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) => tick());
+  }
+
+  String get _formattedTimeLeft {
+    final minutes = _timeLeft.inMinutes.toString().padLeft(2, '0');
+    final seconds = (_timeLeft.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 
   // A helper method to run camera, wait for it to finish, then run GPS
@@ -73,7 +128,10 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
   }
 
   // Get current device GPS location
-  Future<void> _determinePosition() async {
+  //
+  // [silent] is used by the background poller: it refreshes the coordinates
+  // without flipping the full-screen spinner on every tick.
+  Future<void> _determinePosition({bool silent = false}) async {
     bool serviceEnabled;
     LocationPermission permission;
 
@@ -102,7 +160,7 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    if (!silent) setState(() => _isLoading = true);
     try {
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy:
@@ -117,19 +175,23 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
         widget.targetLng,
       );
 
+      if (!mounted) return;
       setState(() {
         _currentPosition = position;
         _distanceFromTarget = distance;
-        _isLoading = false;
+        if (!silent) _isLoading = false;
         if (distance > widget.allowedRadiusMeters) {
           _statusMessage =
-              "Out of Bounds! You are ${distance.toStringAsFixed(1)}m away.";
+              "Too far to check in. Follow the directions below.";
         } else {
           _statusMessage =
               "Location verified. You are within range (${distance.toStringAsFixed(1)}m).";
         }
       });
     } catch (e) {
+      if (!mounted) return;
+      // A failed background poll should not wipe out working guidance.
+      if (silent) return;
       setState(() {
         _isLoading = false;
         _statusMessage = "Error fetching location: $e";
@@ -151,6 +213,14 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
       setState(
         () => _statusMessage =
             "Check-in blocked: Outside the required perimeter.",
+      );
+      return;
+    }
+
+    if (_windowExpired) {
+      setState(
+        () => _statusMessage =
+            "The photo window has closed. Ask your instructor to record you manually.",
       );
       return;
     }
@@ -185,22 +255,40 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
 
       var response = await request.send();
 
+      final responseBody = await response.stream.bytesToString();
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         setState(() => _statusMessage = "Attendance Checked In Successfully!");
         if (mounted) {
+          // Surface the presence-check warning so it is not a surprise later.
+          String note = '';
+          try {
+            note = (jsonDecode(responseBody)['presence_note'] as String?) ?? '';
+          } catch (_) {
+            // A non-JSON success body is not worth failing the check-in over.
+          }
+
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Time-in Recorded Successfully!'),
+            SnackBar(
+              content: Text(
+                note.isNotEmpty ? 'Time-in recorded. $note' : 'Time-in Recorded Successfully!',
+              ),
               backgroundColor: Colors.green,
+              duration: const Duration(seconds: 5),
             ),
           );
-          Navigator.pop(context); // Go back to dashboard after success!
+          Navigator.pop(context, true); // Go back to dashboard after success!
         }
       } else {
-        setState(
-          () => _statusMessage =
-              "Server verification failed. Error Code: ${response.statusCode}",
-        );
+        // The backend explains exactly why (window closed, already timed in...).
+        String serverMessage = "Error Code: ${response.statusCode}";
+        try {
+          final decoded = jsonDecode(responseBody) as Map<String, dynamic>;
+          serverMessage = (decoded['message'] ?? decoded['error'] ?? serverMessage).toString();
+        } catch (_) {
+          // Keep the status-code fallback.
+        }
+        setState(() => _statusMessage = serverMessage);
       }
     } catch (e) {
       setState(() => _statusMessage = "Network transaction failed: $e");
@@ -211,6 +299,8 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
 
   @override
   void dispose() {
+    _countdownTimer?.cancel();
+    _locationPoller?.cancel();
     _cameraController?.dispose();
     super.dispose();
   }
@@ -257,6 +347,70 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
                   ),
                   const SizedBox(height: 16),
 
+                  // The guidance map makes this section taller than a small
+                  // phone can fit, so let everything below the camera scroll.
+                  Expanded(
+                    flex: 4,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                  // Countdown for the photo submission window.
+                  if (_hasDeadline) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _windowExpired
+                            ? Colors.red.shade50
+                            : (_timeLeft.inSeconds <= 60
+                                  ? Colors.orange.shade50
+                                  : Colors.blue.shade50),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _windowExpired
+                              ? Colors.red.shade200
+                              : (_timeLeft.inSeconds <= 60
+                                    ? Colors.orange.shade300
+                                    : Colors.blue.shade200),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _windowExpired ? Icons.timer_off : Icons.timer,
+                            size: 20,
+                            color: _windowExpired
+                                ? Colors.red.shade700
+                                : (_timeLeft.inSeconds <= 60
+                                      ? Colors.orange.shade800
+                                      : Colors.blue.shade700),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              _windowExpired
+                                  ? "Photo window closed"
+                                  : "Submit your photo within $_formattedTimeLeft",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: _windowExpired
+                                    ? Colors.red.shade700
+                                    : (_timeLeft.inSeconds <= 60
+                                          ? Colors.orange.shade900
+                                          : Colors.blue.shade900),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
                   // Status and Feedback Card Panel Area
                   Card(
                     elevation: 2,
@@ -277,11 +431,14 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
                             ),
                           ),
                           const Divider(height: 20),
-                          Text(
-                            "Latitude: ${_currentPosition == null ? 'Searching...' : _currentPosition!.latitude.toStringAsFixed(6)}",
-                          ),
-                          Text(
-                            "Longitude: ${_currentPosition == null ? 'Searching...' : _currentPosition!.longitude.toStringAsFixed(6)}",
+                          // Which way to walk, how far is left, and a map.
+                          LocationGuidanceCard(
+                            targetLat: widget.targetLat,
+                            targetLng: widget.targetLng,
+                            allowedRadiusMeters: widget.allowedRadiusMeters,
+                            currentLat: _currentPosition?.latitude,
+                            currentLng: _currentPosition?.longitude,
+                            distanceMeters: _distanceFromTarget,
                           ),
                         ],
                       ),
@@ -297,9 +454,11 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
                   ),
                   const SizedBox(height: 10),
                   ElevatedButton(
-                    onPressed: isWithinBounds ? _processCheckIn : null,
+                    onPressed: (isWithinBounds && !_windowExpired)
+                        ? _processCheckIn
+                        : null,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isWithinBounds
+                      backgroundColor: (isWithinBounds && !_windowExpired)
                           ? Colors.green
                           : Colors.grey,
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -307,9 +466,15 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: const Text(
-                      "Confirm & Submit Attendance",
-                      style: TextStyle(color: Colors.white, fontSize: 16),
+                    child: Text(
+                      _windowExpired
+                          ? "Photo Window Closed"
+                          : "Confirm & Submit Attendance",
+                      style: const TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                  ),
+                        ],
+                      ),
                     ),
                   ),
                 ],

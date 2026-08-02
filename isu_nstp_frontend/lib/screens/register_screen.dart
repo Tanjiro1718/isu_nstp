@@ -20,6 +20,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // Form & Input Controllers
   final _formKey = GlobalKey<FormState>();
+  final _firstNameController = TextEditingController();
+  final _middleNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
   final _idNumberController = TextEditingController();
   final _courseSectionController = TextEditingController();
   final _emailController = TextEditingController();
@@ -38,6 +41,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
+    _firstNameController.dispose();
+    _middleNameController.dispose();
+    _lastNameController.dispose();
     _idNumberController.dispose();
     _courseSectionController.dispose();
     _emailController.dispose();
@@ -88,6 +94,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       request.headers['ngrok-skip-browser-warning'] = 'true';
 
       // Text form fields payload
+      request.fields['first_name'] = _firstNameController.text.trim();
+      request.fields['middle_name'] = _middleNameController.text.trim();
+      request.fields['last_name'] = _lastNameController.text.trim();
       request.fields['username'] = _idNumberController.text.trim();
       request.fields['course_and_section'] = _courseSectionController.text.trim();
       request.fields['email'] = _emailController.text.trim();
@@ -336,7 +345,59 @@ class _RegisterScreenState extends State<RegisterScreen> {
           const Text("Fill out the form to register for NSTP", style: TextStyle(color: Colors.grey)),
           const SizedBox(height: 32),
 
-          // 1. ID Number (Username)
+          // 1. First Name
+          TextFormField(
+            controller: _firstNameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'First Name',
+              hintText: 'e.g. Juan',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.person, color: isuGreen),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: isuGreen, width: 2),
+              ),
+            ),
+            validator: (value) =>
+                value!.trim().isEmpty ? 'First Name is required.' : null,
+          ),
+          const SizedBox(height: 16),
+
+          // 2. Middle Name (optional - not everyone has one)
+          TextFormField(
+            controller: _middleNameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Middle Name (Optional)',
+              hintText: 'e.g. Santos',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.person_outline, color: isuGreen),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: isuGreen, width: 2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 3. Last Name
+          TextFormField(
+            controller: _lastNameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Last Name',
+              hintText: 'e.g. Dela Cruz',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.badge_outlined, color: isuGreen),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: isuGreen, width: 2),
+              ),
+            ),
+            validator: (value) =>
+                value!.trim().isEmpty ? 'Last Name is required.' : null,
+          ),
+          const SizedBox(height: 16),
+
+          // 4. ID Number (Username)
           TextFormField(
             controller: _idNumberController,
             decoration: const InputDecoration(
@@ -352,7 +413,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // 2. Course & Section
+          // 5. Course & Section
           TextFormField(
             controller: _courseSectionController,
             decoration: const InputDecoration(
@@ -368,7 +429,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // 3. ISU Email
+          // 6. ISU Email
           TextFormField(
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
@@ -394,7 +455,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // 4. Password
+          // 7. Password
           TextFormField(
             controller: _passwordController,
             obscureText: _obscurePassword,
@@ -414,7 +475,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // 5. Confirm Password
+          // 8. Confirm Password
           TextFormField(
             controller: _confirmPasswordController,
             obscureText: _obscureConfirmPassword,
@@ -442,7 +503,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 24),
 
-          // 6. ID Picture Upload Box
+          // 9. ID Picture Upload Box
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -5,9 +6,15 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../config/api_config.dart';
+import '../../models/user_model.dart';
+import '../../services/headcount_service.dart';
 
 class InstructorMonitorScreen extends StatefulWidget {
-  const InstructorMonitorScreen({super.key});
+  /// Needed to authorise opening the time-out window. Optional so the screen
+  /// still renders (read-only) if pushed without a signed-in instructor.
+  final UserModel? instructor;
+
+  const InstructorMonitorScreen({super.key, this.instructor});
 
   @override
   State<InstructorMonitorScreen> createState() => _InstructorMonitorScreenState();
@@ -23,16 +30,96 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
   DateTime? _dateFrom;
   DateTime? _dateTo;
 
+  // --- Live standby roster for the newest activity ---
+  SessionRoster? _roster;
+  Timer? _rosterPoller;
+  bool _isOpeningCheckOut = false;
+
   @override
   void initState() {
     super.initState();
     _fetchLogs();
+    // Poll so newly answered presence checks and time-outs appear without the
+    // instructor having to pull to refresh.
+    _rosterPoller = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _refreshRoster(),
+    );
   }
 
   @override
   void dispose() {
+    _rosterPoller?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// The most recent session id present in the logs - that is the activity the
+  /// instructor is currently running.
+  int? get _activeSessionId {
+    for (final log in _logs) {
+      final raw = log['session_id'];
+      final id = raw is int ? raw : int.tryParse('$raw');
+      if (id != null) return id;
+    }
+    return null;
+  }
+
+  Future<void> _refreshRoster() async {
+    final sessionId = _activeSessionId;
+    if (sessionId == null) return;
+
+    final roster = await HeadcountService.fetchRoster(sessionId);
+    // Null means the request failed; keep the previous snapshot on screen.
+    if (roster != null && mounted) {
+      setState(() => _roster = roster);
+    }
+  }
+
+  Future<void> _openCheckOut() async {
+    final sessionId = _activeSessionId;
+    final instructor = widget.instructor;
+    if (sessionId == null || instructor == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Open time-out?'),
+        content: Text(
+          'Students on standby for "${_roster?.sessionTitle ?? 'this activity'}" '
+          'will be notified that they may submit their time-out photo. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Open time-out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isOpeningCheckOut = true);
+    final result = await HeadcountService.openCheckOut(
+      sessionId: sessionId,
+      instructorUserId: instructor.id,
+    );
+
+    if (!mounted) return;
+    setState(() => _isOpeningCheckOut = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.message),
+        backgroundColor: result.success ? Colors.green : Colors.red,
+      ),
+    );
+    await _refreshRoster();
   }
 
   Future<void> _fetchLogs() async {
@@ -49,6 +136,8 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
         setState(() {
           _logs = decoded.cast<Map<String, dynamic>>();
         });
+        // Logs drive which session the roster shows, so refresh it after.
+        await _refreshRoster();
       } else {
         setState(() {
           _errorMessage = 'Unable to load attendance records. Error ${response.statusCode}.';
@@ -408,6 +497,205 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
     );
   }
 
+  /// Standby panel: who is waiting to time out, how many random presence checks
+  /// each student has answered, and the button that releases time-out.
+  Widget _buildStandbyPanel() {
+    final roster = _roster;
+    if (roster == null) return const SizedBox.shrink();
+
+    final canOpen = widget.instructor != null &&
+        !roster.isCheckOutOpen &&
+        !_isOpeningCheckOut;
+
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  roster.isCheckOutOpen ? Icons.lock_open : Icons.hourglass_top,
+                  color: roster.isCheckOutOpen ? Colors.green : Colors.orange,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    roster.sessionTitle,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              roster.isCheckOutOpen
+                  ? 'Time-out is OPEN. Students may submit their time-out photo.'
+                  : '${roster.standby} student(s) on standby. They cannot time out '
+                        'until you open the window.',
+              style: TextStyle(
+                fontSize: 13,
+                color: roster.isCheckOutOpen
+                    ? Colors.green.shade800
+                    : Colors.orange.shade900,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Headline counts.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildCountChip('Timed in', roster.totalTimedIn, Colors.blue),
+                _buildCountChip('On standby', roster.standby, Colors.orange),
+                _buildCountChip('Timed out', roster.checkedOut, Colors.green),
+                if (roster.warned > 0)
+                  _buildCountChip('Warned', roster.warned, Colors.amber),
+                if (roster.failed > 0)
+                  _buildCountChip('Failed', roster.failed, Colors.red),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            if (!roster.isCheckOutOpen)
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: canOpen ? _openCheckOut : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: _isOpeningCheckOut
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.lock_open),
+                  label: Text(
+                    _isOpeningCheckOut
+                        ? 'Opening...'
+                        : 'Open time-out for everyone',
+                  ),
+                ),
+              ),
+
+            if (roster.students.isNotEmpty) ...[
+              const Divider(height: 24),
+              const Text(
+                'Presence checks answered',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              ...roster.students.map(_buildRosterRow),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCountChip(String label, int value, MaterialColor color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.shade50,
+        border: Border.all(color: color.shade200),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        '$label: $value',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: color.shade900,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRosterRow(RosterEntry entry) {
+    late final Color color;
+    late final IconData icon;
+    late final String stateLabel;
+
+    if (entry.isCheckedOut) {
+      color = Colors.green;
+      icon = Icons.task_alt;
+      stateLabel = 'Timed out ${entry.timeOut ?? ''}'.trim();
+    } else if (entry.hasFailed) {
+      color = Colors.red;
+      icon = Icons.gpp_bad;
+      stateLabel = 'Failed verification';
+    } else if (entry.checksAwaiting > 0) {
+      color = Colors.deepOrange;
+      icon = Icons.notifications_active;
+      stateLabel = 'Awaiting response';
+    } else {
+      color = Colors.orange;
+      icon = Icons.hourglass_bottom;
+      stateLabel = 'On standby';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.studentName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                Text(
+                  'In ${entry.timeIn} • $stateLabel',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          // The headline number the instructor asked for: how many of the random
+          // pings this student actually pushed back on.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              entry.checkSummary,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredLogs = _filteredLogs;
@@ -477,6 +765,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
+                  _buildStandbyPanel(),
                   Wrap(
                     spacing: 12,
                     runSpacing: 12,

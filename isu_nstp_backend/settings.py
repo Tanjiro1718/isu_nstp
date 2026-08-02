@@ -48,6 +48,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Stands in for a cron job: sends due presence pings on API traffic.
+    'attendance.middleware.PresenceDispatchMiddleware',
 ]
 
 ROOT_URLCONF = 'isu_nstp_backend.urls'

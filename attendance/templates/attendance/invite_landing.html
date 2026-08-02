@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Join {{ class_group.name }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 100%;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 36px;
+            font-weight: bold;
+        }
+        h1 {
+            color: #1a202c;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .instructor {
+            color: #718096;
+            font-size: 16px;
+            margin-bottom: 30px;
+        }
+        .info-card {
+            background: #f7fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+        .label {
+            color: #718096;
+            font-weight: 500;
+        }
+        .value {
+            color: #2d3748;
+            font-weight: 600;
+        }
+        .join-code-box {
+            background: #edf2f7;
+            border: 2px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .join-code-label {
+            color: #718096;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .join-code {
+            font-size: 32px;
+            font-weight: 700;
+            color: #667eea;
+            letter-spacing: 4px;
+            font-family: 'Courier New', monospace;
+        }
+        .instructions {
+            background: #fff5f5;
+            border-left: 4px solid #f56565;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        .instructions-title {
+            color: #c53030;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .instructions ol {
+            color: #742a2a;
+            font-size: 14px;
+            padding-left: 20px;
+            line-height: 1.6;
+        }
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        .footer {
+            color: #a0aec0;
+            font-size: 12px;
+            margin-top: 30px;
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 30px 20px;
+            }
+            h1 {
+                font-size: 24px;
+            }
+            .join-code {
+                font-size: 28px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">📚</div>
+        <h1>{{ class_group.name }}</h1>
+        <p class="instructor">Instructor: {{ instructor_name }}</p>
+
+        <div class="info-card">
+            <div class="info-row">
+                <span class="label">Component:</span>
+                <span class="value">{{ class_group.component }}</span>
+            </div>
+            {% if class_group.section_code %}
+            <div class="info-row">
+                <span class="label">Section:</span>
+                <span class="value">{{ class_group.section_code }}</span>
+            </div>
+            {% endif %}
+            {% if class_group.description %}
+            <div class="info-row">
+                <span class="label">Description:</span>
+                <span class="value">{{ class_group.description }}</span>
+            </div>
+            {% endif %}
+            <div class="info-row">
+                <span class="label">Students:</span>
+                <span class="value">{{ class_group.student_count }}</span>
+            </div>
+        </div>
+
+        <div class="join-code-box">
+            <div class="join-code-label">Class Join Code</div>
+            <div class="join-code">{{ class_group.join_code|upper }}</div>
+        </div>
+
+        <div class="instructions">
+            <div class="instructions-title">📱 How to Join This Class:</div>
+            <ol>
+                <li>Open the <strong>ISU NSTP App</strong> on your phone</li>
+                <li>Log in to your student account</li>
+                <li>Tap <strong>"Join Class"</strong> on your dashboard</li>
+                <li>Enter the join code shown above</li>
+                <li>Tap <strong>"Join"</strong> to enroll</li>
+            </ol>
+        </div>
+
+        <div class="footer">
+            ISU NSTP Attendance System<br>
+            Isabela State University
+        </div>
+    </div>
+</body>
+</html>

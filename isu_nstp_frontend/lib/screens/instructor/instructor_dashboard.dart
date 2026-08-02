@@ -3,6 +3,8 @@ import '../../models/user_model.dart';
 import '../login_screen.dart';
 import 'instructor_settings_screen.dart';
 import 'instructor_monitor_screen.dart';
+import 'instructor_classes_screen.dart';
+
 
 class InstructorDashboard extends StatefulWidget {
   final UserModel user;
@@ -66,12 +68,31 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const InstructorMonitorScreen(),
+                    builder: (context) =>
+                        InstructorMonitorScreen(instructor: widget.user),
                   ),
                 );
               },
             ),
+            const SizedBox(height: 20),
+            _buildDashboardCard(
+              context,
+              title: 'My Classes',
+              subtitle: 'Manage groups and invite students via link/code',
+              icon: Icons.school,
+              iconColor: Colors.orange,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => InstructorClassesScreen(user: widget.user),
+                  ),
+                );
+              },
+            ),
+
           ],
+
         ),
       ),
     );

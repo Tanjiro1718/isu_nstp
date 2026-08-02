@@ -1,8 +1,17 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
-from .models import User, AttendanceSession, AttendanceRecord, StudentProfile, SystemSettings
+from .models import (
+    User,
+    AttendanceSession,
+    AttendanceRecord,
+    StudentProfile,
+    SystemSettings,
+    ClassGroup,
+    ClassEnrollment,
+)
 from django.contrib.auth import get_user_model
 from .models import StudentProfile
+
 
 User = get_user_model()
 
@@ -69,9 +78,21 @@ class UserSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         profile = self._get_student_profile(instance)
+
+        # Expose every field captured at registration so the app can show a
+        # complete profile without extra round trips.
         rep['student_id'] = profile.student_id if profile else None
-        rep['course_and_section'] = profile.component if profile else None
-        
+        rep['course_and_section'] = profile.course_and_section if profile else None
+        rep['component'] = profile.component if profile else None
+        rep['section_code'] = profile.section_code if profile else None
+        rep['is_email_verified'] = profile.is_email_verified if profile else False
+        rep['is_approved_by_admin'] = profile.is_approved_by_admin if profile else False
+        rep['phone_number'] = getattr(instance, 'phone_number', None)
+        rep['first_name'] = instance.first_name
+        rep['middle_name'] = getattr(instance, 'middle_name', None)
+        rep['last_name'] = instance.last_name
+        rep['date_joined'] = instance.date_joined.isoformat() if instance.date_joined else None
+
         return rep
 
     def _get_student_profile(self, obj):
@@ -167,9 +188,14 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class SessionSerializer(serializers.ModelSerializer):
+    class_name = serializers.SerializerMethodField()
+
     class Meta:
         model = AttendanceSession
         fields = '__all__'
+
+    def get_class_name(self, obj):
+        return obj.class_group.name if obj.class_group else None
 
 class AttendanceLogSerializer(serializers.ModelSerializer):
     student_id = serializers.CharField(source='student.student_id', read_only=True)
@@ -177,12 +203,22 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
     department = serializers.CharField(source='student.component', read_only=True)
     section_code = serializers.CharField(source='student.section_code', read_only=True)
     session_title = serializers.CharField(source='session.title', read_only=True)
+    # Lets the instructor's monitor screen group rows by activity and open the
+    # matching live roster.
+    session_id = serializers.IntegerField(read_only=True)
+    session_check_out_open = serializers.BooleanField(
+        source='session.is_check_out_open', read_only=True
+    )
     date = serializers.DateTimeField(source='timestamp', format='%m/%d/%Y', read_only=True)
     time = serializers.DateTimeField(source='timestamp', format='%I:%M %p', read_only=True)
     mode = serializers.CharField(read_only=True)
     student_photo_url = serializers.SerializerMethodField()
     address = serializers.CharField(source='student_address', allow_blank=True, allow_null=True, read_only=True)
     selfie_image_url = serializers.SerializerMethodField()
+    # Blank until the student submits their time-out photo.
+    check_out_time = serializers.DateTimeField(
+        source='check_out_at', format='%I:%M %p', read_only=True
+    )
 
     class Meta:
         model = AttendanceRecord
@@ -193,6 +229,8 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
             'department',
             'section_code',
             'session_title',
+            'session_id',
+            'session_check_out_open',
             'date',
             'time',
             'mode',
@@ -203,6 +241,9 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
             'selfie_verified',
             'student_photo_url',
             'selfie_image_url',
+            'presence_status',
+            'missed_checks',
+            'check_out_time',
         ]
 
     def get_student_name(self, obj):
@@ -227,3 +268,85 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = SystemSettings
         fields = '__all__'
+
+
+class ClassMemberSerializer(serializers.ModelSerializer):
+    """A single student inside a class roster."""
+    enrollment_id = serializers.IntegerField(source='id', read_only=True)
+    user_id = serializers.IntegerField(source='student.user.id', read_only=True)
+    student_id = serializers.CharField(source='student.student_id', read_only=True)
+    student_name = serializers.SerializerMethodField()
+    email = serializers.EmailField(source='student.user.email', read_only=True)
+    course_and_section = serializers.CharField(source='student.course_and_section', read_only=True)
+    joined_at = serializers.DateTimeField(format='%m/%d/%Y %I:%M %p', read_only=True)
+
+    class Meta:
+        model = ClassEnrollment
+        fields = [
+            'enrollment_id',
+            'user_id',
+            'student_id',
+            'student_name',
+            'email',
+            'course_and_section',
+            'status',
+            'join_method',
+            'joined_at',
+        ]
+
+    def get_student_name(self, obj):
+        user = obj.student.user
+        return user.get_full_name() or user.username
+
+
+class ClassGroupSerializer(serializers.ModelSerializer):
+    instructor_name = serializers.SerializerMethodField()
+    student_count = serializers.IntegerField(read_only=True)
+    pending_count = serializers.SerializerMethodField()
+    invite_link = serializers.SerializerMethodField()
+    created_at = serializers.DateTimeField(format='%m/%d/%Y', read_only=True)
+
+    class Meta:
+        model = ClassGroup
+        fields = [
+            'id',
+            'name',
+            'component',
+            'section_code',
+            'description',
+            'instructor',
+            'instructor_name',
+            'join_code',
+            'invite_link',
+            'is_join_enabled',
+            'requires_approval',
+            'student_count',
+            'pending_count',
+            'created_at',
+        ]
+        read_only_fields = ['join_code', 'invite_link', 'created_at']
+
+    def get_instructor_name(self, obj):
+        return obj.instructor.get_full_name() or obj.instructor.username
+
+    def get_pending_count(self, obj):
+        return obj.enrollments.filter(status='pending').count()
+
+    def get_invite_link(self, obj):
+        path = f'/join/{obj.invite_token}/'
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(path)
+        return path
+
+
+class ClassGroupDetailSerializer(ClassGroupSerializer):
+    members = serializers.SerializerMethodField()
+
+    class Meta(ClassGroupSerializer.Meta):
+        fields = ClassGroupSerializer.Meta.fields + ['members']
+
+    def get_members(self, obj):
+        enrollments = obj.enrollments.exclude(status='removed').select_related('student__user')
+        return ClassMemberSerializer(enrollments, many=True).data
+

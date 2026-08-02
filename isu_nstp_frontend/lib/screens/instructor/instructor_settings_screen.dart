@@ -4,14 +4,16 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../config/api_config.dart';
+import '../../models/class_model.dart';
 import '../../models/user_model.dart';
+import '../../services/class_service.dart';
 
 class InstructorSettingsScreen extends StatefulWidget {
   final UserModel user;
   const InstructorSettingsScreen({super.key, required this.user});
 
   @override
-  _InstructorSettingsScreenState createState() =>
+  State<InstructorSettingsScreen> createState() =>
       _InstructorSettingsScreenState();
 }
 
@@ -28,6 +30,12 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
   LatLng? _pickedLocation;
   final MapController _mapController = MapController();
 
+  // The class this geofence session belongs to.
+  List<ClassModel> _classes = [];
+  int? _selectedClassId;
+  bool _isLoadingClasses = true;
+  String? _classLoadError;
+
   final String apiUrl = ApiConfig.systemSettingsUrl;
   final String sessionUrl = ApiConfig.currentSessionUrl;
 
@@ -35,6 +43,26 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
   void initState() {
     super.initState();
     _loadCurrentSettings();
+    _loadClasses();
+  }
+
+  Future<void> _loadClasses() async {
+    try {
+      final classes = await ClassService.fetchInstructorClasses(widget.user.id);
+      if (!mounted) return;
+      setState(() {
+        _classes = classes;
+        // Preselect when there is only one class, so the common case is 1 tap.
+        if (classes.length == 1) _selectedClassId = classes.first.id;
+        _isLoadingClasses = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _classLoadError = e.toString();
+        _isLoadingClasses = false;
+      });
+    }
   }
 
   Future<void> _loadCurrentSettings() async {
@@ -66,6 +94,17 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
   Future<void> _saveSettings() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Without a class the session would be invisible to every student.
+    if (_selectedClassId == null) {
+      _showSnackBar(
+        _classes.isEmpty
+            ? 'Create a class first, then assign this location to it.'
+            : 'Please choose which class this session is for.',
+        Colors.red,
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       final response = await http.put(
@@ -84,7 +123,10 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
 
       if (response.statusCode == 200) {
         await _createAttendanceSession();
-        _showSnackBar('Attendance session started successfully!', Colors.green);
+        final className = _classes
+            .firstWhere((c) => c.id == _selectedClassId)
+            .name;
+        _showSnackBar('Session started for $className!', Colors.green);
       } else {
         _showSnackBar('Failed updating class settings.', Colors.red);
       }
@@ -95,22 +137,114 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
   }
 
   Future<void> _createAttendanceSession() async {
+    final selectedClass = _classes.firstWhere((c) => c.id == _selectedClassId);
+
     final response = await http.post(
       Uri.parse(sessionUrl),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
         'instructor': widget.user.id,
-        'title': 'NSTP Attendance Session',
+        'title': '${selectedClass.name} Attendance',
         'date_time': DateTime.now().toUtc().toIso8601String(),
         'target_latitude': double.parse(_latController.text),
         'target_longitude': double.parse(_lngController.text),
         'radius_meters': int.parse(_radiusController.text),
+        // Ties the geofence to a class so only its members can check in.
+        'class_group': _selectedClassId,
       }),
     );
 
     if (response.statusCode != 201) {
       throw Exception('Failed creating attendance session: ${response.body}');
     }
+  }
+
+  /// Dropdown of the instructor's classes; the geofence is saved against it.
+  Widget _buildClassPicker() {
+    if (_isLoadingClasses) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_classLoadError != null) {
+      return _buildClassNotice(
+        color: Colors.red,
+        icon: Icons.cloud_off,
+        text: 'Could not load your classes: $_classLoadError',
+        onRetry: () {
+          setState(() {
+            _isLoadingClasses = true;
+            _classLoadError = null;
+          });
+          _loadClasses();
+        },
+      );
+    }
+
+    if (_classes.isEmpty) {
+      return _buildClassNotice(
+        color: Colors.orange,
+        icon: Icons.info_outline,
+        text:
+            'You have no classes yet. Create one in "My Classes" first, then '
+            'come back to assign this attendance location to it.',
+      );
+    }
+
+    return DropdownButtonFormField<int>(
+      initialValue: _selectedClassId,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Assign this session to',
+        border: OutlineInputBorder(),
+        prefixIcon: Icon(Icons.class_),
+      ),
+      hint: const Text('Select a class'),
+      items: _classes.map((c) {
+        final label = [
+          c.name,
+          if (c.sectionCode.isNotEmpty) c.sectionCode,
+        ].join(' - ');
+        return DropdownMenuItem(
+          value: c.id,
+          child: Text(
+            '$label  (${c.studentCount} students)',
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      }).toList(),
+      onChanged: (val) => setState(() => _selectedClassId = val),
+      validator: (val) => val == null ? 'Please choose a class' : null,
+    );
+  }
+
+  Widget _buildClassNotice({
+    required Color color,
+    required IconData icon,
+    required String text,
+    VoidCallback? onRetry,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text, style: TextStyle(fontSize: 12, color: color)),
+          ),
+          if (onRetry != null)
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
+      ),
+    );
   }
 
   void _showSnackBar(String message, Color color) {
@@ -135,6 +269,22 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                 key: _formKey,
                 child: ListView(
                   children: [
+                    const Text(
+                      "Which Class?",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    const Text(
+                      "Only students enrolled in the class you pick will see this session.",
+                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildClassPicker(),
+                    const SizedBox(height: 32),
+
                     const Text(
                       "Set Meeting Location",
                       style: TextStyle(
