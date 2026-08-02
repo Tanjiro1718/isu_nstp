@@ -71,5 +71,7 @@
 	<string>ISU-NSTP needs location parameters to verify geofence validation metrics.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>ISU-NSTP requires camera access to process selfie facial biometrics validations.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>ISU-NSTP uses Face ID to keep your profile details private on this device.</string>
 </dict>
 </plist>

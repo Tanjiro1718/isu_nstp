@@ -6,6 +6,8 @@ import '../../config/api_config.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
 import '../../services/presence_service.dart';
+import '../../services/profile_lock_service.dart';
+import '../../widgets/biometric_lock_widget.dart';
 import '../login_screen.dart';
 import '../profile_screen.dart';
 import 'student_checkin_screen.dart';
@@ -38,6 +40,10 @@ class _StudentDashboardState extends State<StudentDashboard> {
   /// and the TextField then rebuilds against a disposed controller.
   final TextEditingController _joinCodeController = TextEditingController();
 
+  // --- Face Unlock protection for profile details ---
+  bool _profileLockEnabled = false;
+  bool _biometricAvailable = false;
+
   // --- ISU Theme Colors ---
   static const Color isuGreen = Color(0xFF006837);
 
@@ -47,6 +53,53 @@ class _StudentDashboardState extends State<StudentDashboard> {
     _currentUser = widget.user;
     _loadMyClasses();
     _startPresencePolling();
+    _loadProfileLockState();
+  }
+
+  /// Reads the saved preference and checks whether this device can actually
+  /// do a biometric check, so the settings row can explain itself accurately.
+  Future<void> _loadProfileLockState() async {
+    final available = await ProfileLockService.isBiometricAvailable();
+    final enabled = await ProfileLockService.isLockEnabled(_currentUser.id);
+    if (!mounted) return;
+    setState(() {
+      _biometricAvailable = available;
+      _profileLockEnabled = enabled;
+    });
+  }
+
+  /// Turning the lock ON requires passing the check first - that proves the
+  /// student can actually get back in before we start hiding their data.
+  Future<void> _toggleProfileLock(bool enable) async {
+    if (enable) {
+      final result = await ProfileLockService.authenticate(
+        reason: 'Verify your identity to turn on profile protection',
+      );
+      if (!mounted) return;
+
+      if (result == LockResult.unavailable) {
+        _showSnackBar(
+          'No face or fingerprint is set up on this device. Add one in your '
+          'device settings first.',
+          Colors.orange,
+        );
+        return;
+      }
+      if (result == LockResult.failed) {
+        _showSnackBar('Verification failed. Profile lock not enabled.', Colors.red);
+        return;
+      }
+    }
+
+    await ProfileLockService.setLockEnabled(_currentUser.id, enable);
+    if (!mounted) return;
+    setState(() => _profileLockEnabled = enable);
+    _showSnackBar(
+      enable
+          ? 'Profile details are now protected by Face Unlock.'
+          : 'Profile protection turned off.',
+      enable ? isuGreen : Colors.grey.shade700,
+    );
   }
 
   /// Polls for presence checks so a student with the app open still sees the
@@ -420,7 +473,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 );
               },
             ),
-
+            const SizedBox(height: 16),
+            _buildProfileLockCard(),
           ],
         ),
         ),
@@ -846,7 +900,48 @@ class _StudentDashboardState extends State<StudentDashboard> {
             ],
           ),
           content: SingleChildScrollView(
-            child: Column(
+            // With protection on the details stay hidden until Face Unlock
+            // passes. Gating here rather than on the button means the lock
+            // re-arms every time the dialog is reopened.
+            child: _profileLockEnabled
+                ? BiometricLockWidget(child: _buildProfileDetails())
+                : _buildProfileDetails(),
+          ),
+          actions: [
+            // Security lives on the shared profile screen, so send them there.
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProfileScreen(user: _currentUser),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.lock_reset, size: 18, color: isuGreen),
+              label: const Text(
+                'Change Password',
+                style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text(
+                'Close',
+                style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// The personal details themselves, extracted so they can be rendered either
+  /// directly or behind the biometric gate.
+  Widget _buildProfileDetails() {
+    return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildReadOnlyTile(
@@ -929,36 +1024,38 @@ class _StudentDashboardState extends State<StudentDashboard> {
                   value: _formatJoinDate(_currentUser.dateJoined),
                 ),
               ],
-            ),
+    );
+  }
+
+  /// Lets the student put their personal details behind the device's own face
+  /// or fingerprint check. Nothing biometric is uploaded or stored by the app -
+  /// the match happens inside the OS, and only this on/off flag is saved.
+  Widget _buildProfileLockCard() {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4.0),
+        child: SwitchListTile(
+          value: _profileLockEnabled,
+          onChanged: _biometricAvailable ? _toggleProfileLock : null,
+          activeThumbColor: isuGreen,
+          secondary: CircleAvatar(
+            backgroundColor: isuGreen.withValues(alpha: 0.15),
+            child: const Icon(Icons.face_retouching_natural, color: isuGreen),
           ),
-          actions: [
-            // Security lives on the shared profile screen, so send them there.
-            TextButton.icon(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ProfileScreen(user: _currentUser),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.lock_reset, size: 18, color: isuGreen),
-              label: const Text(
-                'Change Password',
-                style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold),
-              ),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text(
-                'Close',
-                style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-            ),
-          ],
-        );
-      },
+          title: const Text(
+            'Protect My Profile',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          subtitle: Text(
+            _biometricAvailable
+                ? 'Require Face Unlock before showing your profile details'
+                : 'Set up face or fingerprint unlock on this device to use this',
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+      ),
     );
   }
 

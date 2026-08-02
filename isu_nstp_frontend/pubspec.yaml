@@ -43,6 +43,12 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   image_picker: ^1.2.3
+  # Face ID / Android face unlock for locking profile details. The biometric
+  # template stays in the OS secure enclave - the app never sees or stores it.
+  local_auth: ^2.3.0
+  # Remembers the per-student "lock my profile" preference on-device.
+  shared_preferences: ^2.3.2
+
 
 dev_dependencies:
   flutter_test:
