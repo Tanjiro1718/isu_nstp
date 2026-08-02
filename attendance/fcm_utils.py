@@ -216,6 +216,110 @@ def send_presence_warning(record, missed_check):
     )
 
 
+def send_change_password_code(user, code):
+    """
+    Push the change-password verification code to whichever device the user
+    last registered. Works for every role, not just students, because it reads
+    User.push_token rather than StudentProfile.fcm_token.
+    """
+    if not firebase_admin._apps:
+        print("Firebase is not initialized. Cannot send push.")
+        return False
+
+    token = getattr(user, 'push_token', None)
+    if not token:
+        print(f"No device token for {user.username}; change-password push skipped.")
+        return False
+
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title="Confirm your password change 🔐",
+            body=(
+                f"Hello {user.username}, your confirmation code is {code}. "
+                "It expires in 10 minutes. If this wasn't you, do not use it."
+            ),
+        ),
+        data={
+            "type": "change_password_code",
+            "code": str(code),
+        },
+        token=token,
+    )
+
+    try:
+        response = messaging.send(message)
+        print(f"Change-password FCM sent to {user.username}: {response}")
+        return True
+    except Exception as e:
+        print(f"Error sending change-password FCM to {user.username}: {e}")
+        return False
+
+
+def send_password_changed_alert(user):
+    """
+    Security notice after the password actually changes, so a hijacked account
+    surfaces immediately instead of silently.
+    """
+    if not firebase_admin._apps:
+        return False
+
+    token = getattr(user, 'push_token', None)
+    if not token:
+        return False
+
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title="Your password was changed ✅",
+            body=(
+                "Your ISU NSTP password was just updated. "
+                "If this wasn't you, contact the NSTP office immediately."
+            ),
+        ),
+        data={"type": "password_changed"},
+        token=token,
+    )
+
+    try:
+        messaging.send(message)
+        return True
+    except Exception as e:
+        print(f"Error sending password-changed alert to {user.username}: {e}")
+        return False
+
+
+def send_password_reset_code(fcm_token, code, username):
+    """
+    Push a 6-digit password reset verification code to the user's device.
+    Falls back to email when no FCM token is present (handled by the caller).
+    """
+    if not firebase_admin._apps:
+        print("Firebase is not initialized. Cannot send push.")
+        return False
+    if not fcm_token:
+        return False
+
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title="Password Reset Code 🔐",
+            body=f"Hello {username}, your verification code is: {code}. "
+                  "It expires in 10 minutes.",
+        ),
+        data={
+            "type": "password_reset_code",
+            "code": code,
+        },
+        token=fcm_token,
+    )
+
+    try:
+        response = messaging.send(message)
+        print(f"Password-reset FCM sent to {username}: {response}")
+        return True
+    except Exception as e:
+        print(f"Error sending password-reset FCM to {username}: {e}")
+        return False
+
+
 def send_presence_failed(record):
     """Second strike: check-out is now blocked for this activity."""
     return _send_to_student(

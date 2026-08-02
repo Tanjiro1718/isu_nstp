@@ -80,6 +80,24 @@ class ApiConfig {
 
   /// Classes the signed-in student belongs to.
   static String get myClassesUrl => '$baseUrl/api/my-classes/';
+
+  // ---------------------------------------------------------------
+  // Director oversight
+  // ---------------------------------------------------------------
+
+  /// Campus-wide overview: all classes, instructors, and health metrics.
+  /// Optional filters: `?component=CWTS`, `?instructor_id=<id>`.
+  static String directorOverviewUrl({String? component, int? instructorId}) {
+    final params = <String>[];
+    if (component != null) params.add('component=$component');
+    if (instructorId != null) params.add('instructor_id=$instructorId');
+    final query = params.isEmpty ? '' : '?${params.join('&')}';
+    return '$baseUrl/api/director/overview/$query';
+  }
+
+  /// Session-by-session breakdown for one class.
+  static String directorClassSessionsUrl(int classId) =>
+      '$baseUrl/api/director/classes/$classId/sessions/';
 }
 
 

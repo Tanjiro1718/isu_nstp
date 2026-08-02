@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../login_screen.dart';
+import '../profile_screen.dart';
+import 'director_oversight_screen.dart';
 
 class DirectorDashboard extends StatelessWidget {
   final UserModel user;
@@ -16,6 +18,18 @@ class DirectorDashboard extends StatelessWidget {
         foregroundColor: Colors.white,
         elevation: 2,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.account_circle),
+            tooltip: 'My Profile',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ProfileScreen(user: user),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',
@@ -56,30 +70,23 @@ class DirectorDashboard extends StatelessWidget {
             _buildDashboardCard(
               context,
               title: 'Campus Analytics Overview',
-              subtitle: 'View overall student enrollment and attendance trends',
+              subtitle: 'Attendance health for every class and component',
               icon: Icons.pie_chart,
               iconColor: Colors.deepOrange,
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Campus Analytics coming soon!')),
-                );
-              },
+              onTap: () => _openOversight(context),
             ),
-            
+
             const SizedBox(height: 16),
 
             // Button 2: Instructor Monitoring
             _buildDashboardCard(
               context,
               title: 'Instructor Compliance',
-              subtitle: 'Monitor active sessions and instructor activity',
+              subtitle: 'See which instructor handles each class and how they are doing',
               icon: Icons.assignment_ind,
               iconColor: Colors.blueGrey,
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Instructor Monitoring coming soon!')),
-                );
-              },
+              // Same screen - it opens on the "By Instructor" tab.
+              onTap: () => _openOversight(context, initialTab: 1),
             ),
 
             const SizedBox(height: 16),
@@ -99,6 +106,17 @@ class DirectorDashboard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Both oversight cards land on the same screen; [initialTab] picks whether
+  /// it opens grouped by class (0) or by instructor (1).
+  void _openOversight(BuildContext context, {int initialTab = 0}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DirectorOversightScreen(initialTab: initialTab),
       ),
     );
   }

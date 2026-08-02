@@ -7,6 +7,7 @@ import '../../models/user_model.dart';
 import '../../services/class_service.dart';
 import '../../services/presence_service.dart';
 import '../login_screen.dart';
+import '../profile_screen.dart';
 import 'student_checkin_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
@@ -931,6 +932,23 @@ class _StudentDashboardState extends State<StudentDashboard> {
             ),
           ),
           actions: [
+            // Security lives on the shared profile screen, so send them there.
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProfileScreen(user: _currentUser),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.lock_reset, size: 18, color: isuGreen),
+              label: const Text(
+                'Change Password',
+                style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold),
+              ),
+            ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text(

@@ -29,6 +29,23 @@ class User(AbstractUser):
     # first_name / last_name come from AbstractUser; only the middle name is extra.
     middle_name = models.CharField(max_length=150, blank=True, null=True)
 
+    # Device token for push notifications. Lives on User (not StudentProfile)
+    # so instructors, directors, and admins can be notified too.
+    fcm_token = models.CharField(max_length=512, blank=True, null=True)
+
+    @property
+    def push_token(self):
+        """
+        Best available device token.
+
+        Students registered before this field existed still have their token on
+        StudentProfile, so fall back to it rather than losing their push.
+        """
+        if self.fcm_token:
+            return self.fcm_token
+        profile = getattr(self, 'student_profile', None)
+        return getattr(profile, 'fcm_token', None) if profile else None
+
     def get_full_name(self):
         """First + Middle + Last, skipping any blanks.
 
@@ -275,6 +292,23 @@ class OTPVerification(models.Model):
 
     def __str__(self):
         return f"{self.email} - {self.code}"
+
+
+class PasswordResetCode(models.Model):
+    """
+    Temporary password reset verification codes sent via push notification.
+    Separate from OTPVerification to avoid conflicts with registration flow.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='password_reset_codes')
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_valid(self):
+        """Code expires after 10 minutes."""
+        return timezone.now() - self.created_at < datetime.timedelta(minutes=10)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.code} (expires {self.created_at + datetime.timedelta(minutes=10)})"
 
 class PendingApproval(StudentProfile):
     class Meta:

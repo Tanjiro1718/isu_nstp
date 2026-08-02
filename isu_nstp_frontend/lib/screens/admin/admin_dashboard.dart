@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import 'admin_manage_users_screen.dart';
 import '../login_screen.dart';
+import '../profile_screen.dart';
 
 class AdminDashboard extends StatelessWidget {
   final UserModel user;
@@ -16,6 +17,18 @@ class AdminDashboard extends StatelessWidget {
         foregroundColor: Colors.white,
         elevation: 2,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.account_circle),
+            tooltip: 'My Profile',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ProfileScreen(user: user),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',

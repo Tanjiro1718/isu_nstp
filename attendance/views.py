@@ -14,6 +14,7 @@ from .models import (
     ClassGroup,
     ClassEnrollment,
     PresenceCheck,
+    PasswordResetCode,
 )
 from .serializers import (
     UserSerializer,
@@ -31,12 +32,19 @@ from rest_framework import viewsets
 from django.contrib.auth import get_user_model
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.cache import cache
+from django.db.models import Count, Max, Q
 from django.utils import timezone
 import datetime
 from .models import OTPVerification
 from django.db import transaction
 from rest_framework import status, views
-from .fcm_utils import send_approval_notification, notify_check_out_open
+from .fcm_utils import (
+    send_approval_notification,
+    notify_check_out_open,
+    send_password_reset_code,
+    send_change_password_code,
+    send_password_changed_alert,
+)
 from .presence import dispatch_due_presence_checks
 from rest_framework.permissions import IsAuthenticated
 
@@ -337,9 +345,405 @@ class ApproveRejectUserView(views.APIView):
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
+class RequestPasswordResetCodeAPIView(APIView):
+    """
+    Step 1 of forgot-password: the user gives the email on their account and we
+    send a 6-digit code to it, plus a push notification to their phone.
+
+    Always answers 200 for a well-formed ISU address so the endpoint cannot be
+    used to discover which emails have accounts.
+    """
+    permission_classes = [AllowAny]
+
+    # Neutral reply used for both "sent" and "no such account".
+    _SENT_MESSAGE = (
+        'If that email is registered, a 6-digit code is on its way. '
+        'Check your phone notifications and your inbox.'
+    )
+
+    def post(self, request):
+        email = str(request.data.get('email') or '').strip().lower()
+
+        if not email:
+            return Response(
+                {'detail': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if not email.endswith('@isu.edu.ph'):
+            return Response(
+                {'detail': 'Only @isu.edu.ph email addresses are allowed.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            # Don't leak whether the address exists.
+            print(f"⚠️ Password reset requested for unknown email: {email}")
+            return Response({'message': self._SENT_MESSAGE, 'push_sent': False},
+                            status=status.HTTP_200_OK)
+
+        code = generate_otp()
+
+        # One live code per user - issuing a new one retires the old.
+        PasswordResetCode.objects.filter(user=user).delete()
+        PasswordResetCode.objects.create(user=user, code=code)
+
+        # A. Push the code to their phone (the channel the user asked for).
+        profile = getattr(user, 'student_profile', None)
+        fcm_token = getattr(profile, 'fcm_token', None) if profile else None
+        push_sent = False
+        if fcm_token:
+            try:
+                push_sent = send_password_reset_code(fcm_token, code, user.username)
+            except Exception as fcm_err:
+                print(f"❌ Password-reset push failed: {fcm_err}")
+        else:
+            print(f"⚠️ No FCM token for {user.username}; email only.")
+
+        # B. Email it too, so a user without the app installed is not locked out.
+        subject = f"{code} is your ISU password reset code"
+        text_content = (
+            f"Hello {user.username},\n\n"
+            f"Your password reset code is: {code}\n\n"
+            f"It expires in 10 minutes. If you did not request this, ignore this email."
+        )
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px;">
+          <h2>Password Reset Code</h2>
+          <p>Hello <strong>{user.username}</strong>,</p>
+          <p>Use this code to reset your ISU NSTP password:</p>
+          <div style="font-size: 30px; font-weight: bold; background-color: #eef2ff;
+                      color: #1e40af; padding: 14px 24px; display: inline-block;
+                      border-radius: 6px; letter-spacing: 4px;">{code}</div>
+          <p>This code expires in 10 minutes.</p>
+          <p style="color:#666; font-size:12px;">
+            If you did not request a password reset, you can safely ignore this email.
+          </p>
+        </body>
+        </html>
+        """
+
+        email_sent = False
+        try:
+            msg = EmailMultiAlternatives(
+                subject,
+                text_content,
+                getattr(settings, 'DEFAULT_FROM_EMAIL', 'ISU Support <noreply@isu.edu.ph>'),
+                [user.email],
+            )
+            msg.attach_alternative(html_content, "text/html")
+            msg.send()
+            email_sent = True
+        except Exception as mail_err:
+            print(f"❌ Password-reset email failed: {mail_err}")
+
+        # If neither channel worked the user can never continue - say so.
+        if not push_sent and not email_sent:
+            return Response(
+                {'detail': 'Could not deliver your code right now. Please try again later.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        print(f"🔐 Password reset code for {user.username}: {code} "
+              f"(push={push_sent}, email={email_sent})")
+
+        return Response({
+            'message': self._SENT_MESSAGE,
+            'push_sent': push_sent,
+            'email_sent': email_sent,
+        }, status=status.HTTP_200_OK)
+
+
+class ConfirmPasswordResetAPIView(APIView):
+    """
+    Step 2 of forgot-password: verify the 6-digit code and set the new password.
+    The code is single use and dies with the reset.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = str(request.data.get('email') or '').strip().lower()
+        submitted = str(
+            request.data.get('code')
+            or request.data.get('otp_code')
+            or request.data.get('verification_code')
+            or ''
+        ).strip()
+        new_password = request.data.get('new_password') or ''
+
+        if not email or not submitted or not new_password:
+            return Response(
+                {'detail': 'Email, code, and new password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(new_password) < 6:
+            return Response(
+                {'detail': 'Password must be at least 6 characters.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            return Response(
+                {'detail': 'Invalid code. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        record = PasswordResetCode.objects.filter(user=user).order_by('-created_at').first()
+        if record is None:
+            return Response(
+                {'detail': 'No reset code was requested for this account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not record.is_valid():
+            record.delete()
+            return Response(
+                {'detail': 'That code has expired. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if record.code != submitted:
+            return Response(
+                {'detail': 'Invalid code. Please check and try again.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+
+        # Burn every code for this user so it cannot be replayed.
+        PasswordResetCode.objects.filter(user=user).delete()
+
+        print(f"✅ Password reset completed for {user.username}")
+
+        return Response({
+            'message': 'Password reset successful. You can now log in with your new password.',
+            'username': user.username,
+        }, status=status.HTTP_200_OK)
+
+
+class RequestChangePasswordCodeAPIView(APIView):
+    """
+    Step 1 of in-app change password (Profile screen).
+
+    The user is already signed in here, so we demand proof before sending
+    anything: the correct CURRENT password and the email already on the
+    account. Only then does a confirmation code go out over push + email.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        current_password = request.data.get('current_password') or ''
+        email = str(request.data.get('email') or '').strip().lower()
+
+        if not user_id or not current_password or not email:
+            return Response(
+                {'detail': 'user_id, current_password, and email are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Proof #1: they know the current password.
+        if not user.check_password(current_password):
+            return Response(
+                {'detail': 'Your current password is incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Proof #2: the email typed matches the account. Stops someone on an
+        # unlocked phone from redirecting the code to an address they control.
+        if (user.email or '').strip().lower() != email:
+            return Response(
+                {'detail': 'That email does not match the one on your account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        code = generate_otp()
+        PasswordResetCode.objects.filter(user=user).delete()
+        PasswordResetCode.objects.create(user=user, code=code)
+
+        # A. Push to the phone - works for every role via User.push_token.
+        push_sent = False
+        try:
+            push_sent = send_change_password_code(user, code)
+        except Exception as fcm_err:
+            print(f"❌ Change-password push failed: {fcm_err}")
+
+        # B. Email as the fallback channel.
+        email_sent = False
+        try:
+            msg = EmailMultiAlternatives(
+                f"{code} is your ISU password change code",
+                (
+                    f"Hello {user.username},\n\n"
+                    f"Your password change confirmation code is: {code}\n\n"
+                    f"It expires in 10 minutes. If you did not request this, "
+                    f"ignore this email and your password will stay the same."
+                ),
+                getattr(settings, 'DEFAULT_FROM_EMAIL', 'ISU Support <noreply@isu.edu.ph>'),
+                [user.email],
+            )
+            msg.attach_alternative(f"""
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+              <h2>Confirm Your Password Change</h2>
+              <p>Hello <strong>{user.username}</strong>,</p>
+              <div style="font-size: 30px; font-weight: bold; background-color: #eef2ff;
+                          color: #1e40af; padding: 14px 24px; display: inline-block;
+                          border-radius: 6px; letter-spacing: 4px;">{code}</div>
+              <p>This code expires in 10 minutes.</p>
+            </div>
+            """, "text/html")
+            msg.send()
+            email_sent = True
+        except Exception as mail_err:
+            print(f"❌ Change-password email failed: {mail_err}")
+
+        if not push_sent and not email_sent:
+            return Response(
+                {'detail': 'Could not deliver your code right now. Please try again later.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        print(f"🔐 Change-password code for {user.username}: {code} "
+              f"(push={push_sent}, email={email_sent})")
+
+        return Response({
+            'message': 'Confirmation code sent to your phone and email.',
+            'push_sent': push_sent,
+            'email_sent': email_sent,
+        }, status=status.HTTP_200_OK)
+
+
+class ConfirmChangePasswordAPIView(APIView):
+    """
+    Step 2 of in-app change password: check the code and apply the new password.
+
+    The current password is re-verified here too - the code alone is not
+    enough, in case the phone was left unattended between the two steps.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        current_password = request.data.get('current_password') or ''
+        submitted = str(request.data.get('code') or '').strip()
+        new_password = request.data.get('new_password') or ''
+
+        if not user_id or not submitted or not new_password:
+            return Response(
+                {'detail': 'user_id, code, and new_password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(new_password) < 6:
+            return Response(
+                {'detail': 'Password must be at least 6 characters.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if current_password and not user.check_password(current_password):
+            return Response(
+                {'detail': 'Your current password is incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if user.check_password(new_password):
+            return Response(
+                {'detail': 'Your new password must be different from the current one.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        record = PasswordResetCode.objects.filter(user=user).order_by('-created_at').first()
+        if record is None:
+            return Response(
+                {'detail': 'No confirmation code was requested. Please start again.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not record.is_valid():
+            record.delete()
+            return Response(
+                {'detail': 'That code has expired. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if record.code != submitted:
+            return Response(
+                {'detail': 'Invalid code. Please check and try again.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        PasswordResetCode.objects.filter(user=user).delete()
+
+        # Tell the device the password moved - cheap way to surface a hijack.
+        try:
+            send_password_changed_alert(user)
+        except Exception as alert_err:
+            print(f"⚠️ Password-changed alert failed: {alert_err}")
+
+        print(f"✅ Password changed in-app for {user.username}")
+
+        return Response({
+            'message': 'Password changed successfully.',
+            'username': user.username,
+        }, status=status.HTTP_200_OK)
+
+
+class RegisterDeviceTokenAPIView(APIView):
+    """
+    Saves the device's FCM token against the User after login.
+
+    Without this, instructors/directors/admins would never receive a push,
+    since only the student registration flow ever stored a token.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        token = str(request.data.get('fcm_token') or '').strip()
+
+        if not user_id or not token:
+            return Response(
+                {'detail': 'user_id and fcm_token are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        user.fcm_token = token
+        user.save(update_fields=['fcm_token'])
+
+        # Keep the student copy in step so existing student pushes still land.
+        profile = getattr(user, 'student_profile', None)
+        if profile is not None and profile.fcm_token != token:
+            profile.fcm_token = token
+            profile.save(update_fields=['fcm_token'])
+
+        return Response({'message': 'Device registered for notifications.'})
+
+
 class PasswordResetAPIView(APIView):
     """
-    Resets temporary password and emails it directly to the user's @isu.edu.ph inbox.
+    Legacy reset: emails a temporary password. Kept so older builds of the app
+    keep working; new clients use request-code/ + confirm/ instead.
     """
     permission_classes = [AllowAny]
 
@@ -1421,5 +1825,241 @@ class StudentClassListAPIView(APIView):
             })
 
         return Response(classes_data)
+
+
+# ====================================================================================
+# DIRECTOR OVERSIGHT
+# ====================================================================================
+
+# Attendance-rate bands used to label a class at a glance.
+HEALTH_GOOD_THRESHOLD = 85
+HEALTH_FAIR_THRESHOLD = 70
+
+
+def _health_label(rate, has_data):
+    """'good' / 'fair' / 'attention', or 'no_data' before any session runs."""
+    if not has_data:
+        return 'no_data'
+    if rate >= HEALTH_GOOD_THRESHOLD:
+        return 'good'
+    if rate >= HEALTH_FAIR_THRESHOLD:
+        return 'fair'
+    return 'attention'
+
+
+class DirectorOverviewAPIView(APIView):
+    """
+    Campus-wide picture for the NSTP director: every class, the instructor
+    assigned to it, and whether its attendance looks healthy.
+
+    Optional filters: ?component=CWTS, ?instructor_id=<id>.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        component = request.query_params.get('component')
+        instructor_id = request.query_params.get('instructor_id')
+
+        classes = ClassGroup.objects.select_related('instructor').order_by('name')
+        if component:
+            classes = classes.filter(component__iexact=component)
+        if instructor_id:
+            classes = classes.filter(instructor_id=instructor_id)
+
+        classes = list(classes)
+        class_ids = [c.id for c in classes]
+
+        # Roll everything up in three grouped queries instead of per-class hits.
+        enrolled = {
+            row['class_group_id']: row['n']
+            for row in ClassEnrollment.objects
+            .filter(class_group_id__in=class_ids, status='active')
+            .values('class_group_id').annotate(n=Count('id'))
+        }
+
+        sessions = {
+            row['class_group_id']: row
+            for row in AttendanceSession.objects
+            .filter(class_group_id__in=class_ids)
+            .values('class_group_id')
+            .annotate(
+                n=Count('id'),
+                last=Max('date_time'),
+                open_windows=Count('id', filter=Q(is_check_out_open=True)),
+            )
+        }
+
+        records = {
+            row['session__class_group_id']: row
+            for row in AttendanceRecord.objects
+            .filter(session__class_group_id__in=class_ids)
+            .values('session__class_group_id')
+            .annotate(
+                total=Count('id'),
+                failed=Count('id', filter=Q(presence_status='failed')),
+                warned=Count('id', filter=Q(presence_status='warned')),
+                checked_out=Count('id', filter=Q(check_out_at__isnull=False)),
+            )
+        }
+
+        rows = []
+        campus_expected = 0
+        campus_present = 0
+        campus_failed = 0
+
+        for c in classes:
+            students = enrolled.get(c.id, 0)
+            s = sessions.get(c.id, {})
+            r = records.get(c.id, {})
+
+            session_count = s.get('n', 0) or 0
+            last_session = s.get('last')
+            present = r.get('total', 0) or 0
+            failed = r.get('failed', 0) or 0
+            warned = r.get('warned', 0) or 0
+            checked_out = r.get('checked_out', 0) or 0
+
+            # Approximation: assumes the current roster attended every past
+            # session. Students who joined late make this read slightly low.
+            expected = session_count * students
+            rate = round((present / expected) * 100, 1) if expected else 0.0
+            has_data = session_count > 0 and students > 0
+
+            campus_expected += expected
+            campus_present += present
+            campus_failed += failed
+
+            instructor = c.instructor
+            rows.append({
+                'class_id': c.id,
+                'class_name': c.name,
+                'component': c.component or '',
+                'section_code': c.section_code or '',
+                'instructor_id': instructor.id,
+                'instructor_name': instructor.get_full_name() or instructor.username,
+                'instructor_email': instructor.email,
+                'student_count': students,
+                'session_count': session_count,
+                'last_session': timezone.localtime(last_session).strftime('%m/%d/%Y %I:%M %p')
+                if last_session else None,
+                'check_in_count': present,
+                'checked_out_count': checked_out,
+                'failed_count': failed,
+                'warned_count': warned,
+                'attendance_rate': rate,
+                'health': _health_label(rate, has_data),
+                # Flags the director actually acts on.
+                'no_sessions_yet': session_count == 0,
+                'no_students_yet': students == 0,
+            })
+
+        campus_rate = (
+            round((campus_present / campus_expected) * 100, 1)
+            if campus_expected else 0.0
+        )
+
+        # Group the same rows by instructor so the director can see who is
+        # assigned to what, and who is falling behind.
+        instructors = {}
+        for row in rows:
+            key = row['instructor_id']
+            entry = instructors.setdefault(key, {
+                'instructor_id': key,
+                'instructor_name': row['instructor_name'],
+                'instructor_email': row['instructor_email'],
+                'class_count': 0,
+                'student_count': 0,
+                'session_count': 0,
+                'classes_needing_attention': 0,
+                'class_names': [],
+            })
+            entry['class_count'] += 1
+            entry['student_count'] += row['student_count']
+            entry['session_count'] += row['session_count']
+            entry['class_names'].append(row['class_name'])
+            if row['health'] == 'attention':
+                entry['classes_needing_attention'] += 1
+
+        return Response({
+            'summary': {
+                'total_classes': len(rows),
+                'total_instructors': len(instructors),
+                'total_students': sum(r['student_count'] for r in rows),
+                'total_sessions': sum(r['session_count'] for r in rows),
+                'attendance_rate': campus_rate,
+                'failed_verifications': campus_failed,
+                'classes_needing_attention': sum(
+                    1 for r in rows if r['health'] == 'attention'
+                ),
+                'classes_without_sessions': sum(1 for r in rows if r['no_sessions_yet']),
+                'health': _health_label(campus_rate, campus_expected > 0),
+            },
+            'instructors': sorted(
+                instructors.values(), key=lambda i: i['instructor_name'].lower()
+            ),
+            'classes': rows,
+        })
+
+
+class DirectorClassSessionsAPIView(APIView):
+    """
+    Session-by-session breakdown for one class, so the director can see whether
+    a particular activity went well rather than only the class average.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            class_group = ClassGroup.objects.select_related('instructor').get(pk=pk)
+        except ClassGroup.DoesNotExist:
+            return Response({'error': 'Class not found'}, status=404)
+
+        students = ClassEnrollment.objects.filter(
+            class_group=class_group, status='active'
+        ).count()
+
+        stats = {
+            row['session_id']: row
+            for row in AttendanceRecord.objects
+            .filter(session__class_group=class_group)
+            .values('session_id')
+            .annotate(
+                total=Count('id'),
+                failed=Count('id', filter=Q(presence_status='failed')),
+                checked_out=Count('id', filter=Q(check_out_at__isnull=False)),
+            )
+        }
+
+        sessions = []
+        for session in AttendanceSession.objects.filter(
+            class_group=class_group
+        ).order_by('-date_time'):
+            row = stats.get(session.id, {})
+            present = row.get('total', 0) or 0
+            rate = round((present / students) * 100, 1) if students else 0.0
+
+            sessions.append({
+                'session_id': session.id,
+                'title': session.title,
+                'date_time': timezone.localtime(session.date_time).strftime('%m/%d/%Y %I:%M %p'),
+                'expected': students,
+                'checked_in': present,
+                'checked_out': row.get('checked_out', 0) or 0,
+                'failed': row.get('failed', 0) or 0,
+                'attendance_rate': rate,
+                'health': _health_label(rate, students > 0),
+                'is_check_out_open': session.is_check_out_open,
+            })
+
+        instructor = class_group.instructor
+        return Response({
+            'class_id': class_group.id,
+            'class_name': class_group.name,
+            'component': class_group.component or '',
+            'section_code': class_group.section_code or '',
+            'instructor_name': instructor.get_full_name() or instructor.username,
+            'student_count': students,
+            'sessions': sessions,
+        })
 
 

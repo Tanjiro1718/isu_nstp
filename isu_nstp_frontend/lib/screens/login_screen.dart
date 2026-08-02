@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../models/user_model.dart';
 import '../config/api_config.dart';
+import '../services/notification_service.dart';
 import 'admin/admin_dashboard.dart';
 import 'director/director_dashboard.dart';
 import 'instructor/instructor_dashboard.dart';
@@ -78,6 +79,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
         _showSnackBar('Welcome back, ${user.username}!', isuGreen);
 
+        // Bind this device to the account so password codes and other alerts
+        // can be pushed. Fire-and-forget: a failure here must not block login.
+        _registerDeviceToken(user.id);
+
         // Role-based Navigation Routing
         Widget destination;
         switch (user.role.toLowerCase()) {
@@ -119,6 +124,32 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// Sends this device's FCM token to the backend for [userId].
+  ///
+  /// Registration only captured a token at signup, which left every existing
+  /// account (and every instructor/director/admin) without one. Doing it on
+  /// each login also keeps the token fresh after a reinstall.
+  Future<void> _registerDeviceToken(int userId) async {
+    try {
+      final token = await NotificationService().getDeviceToken();
+      if (token == null || token.isEmpty) return;
+
+      await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/device-token/'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true',
+            },
+            body: jsonEncode({'user_id': userId, 'fcm_token': token}),
+          )
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      // Push is a nice-to-have; the email fallback still delivers codes.
+      debugPrint('Could not register device token: $e');
+    }
+  }
+
   String _getLoginErrorMessage(http.Response response) {
     try {
       final Map<String, dynamic> errorData = json.decode(response.body);
@@ -132,7 +163,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- API 1: Request 2FA Verification Code via Phone/SMS ---
+  // --- API 1: Request password reset code (push notification + email) ---
   Future<bool> _sendVerificationCode(String email) async {
     try {
       final response = await http
@@ -153,7 +184,7 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         final Map<String, dynamic> errorData = json.decode(response.body);
         _showSnackBar(
-          errorData['detail'] ?? 'No user found with this @isu.edu.ph email.',
+          errorData['detail'] ?? 'Could not send code at this time.',
           Colors.red,
         );
         return false;
@@ -169,7 +200,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- API 2: Submit Verification Code & Update Password ---
+  // --- API 2: Verify code and set new password ---
   Future<bool> _confirmPasswordReset(
     String email,
     String code,
@@ -198,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         final Map<String, dynamic> errorData = json.decode(response.body);
         _showSnackBar(
-          errorData['detail'] ?? 'Invalid SMS code or reset failed.',
+          errorData['detail'] ?? 'Invalid code or reset failed.',
           Colors.red,
         );
         return false;
@@ -214,7 +245,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- Multi-Step 2FA Phone Verification Forgot Password Dialog ---
+  // --- Multi-Step Password Reset Dialog (push notification + email) ---
   void _showForgotPasswordDialog() {
     final emailController = TextEditingController();
     final codeController = TextEditingController();
@@ -249,12 +280,12 @@ class _LoginScreenState extends State<LoginScreen> {
               title: Row(
                 children: [
                   Icon(
-                    currentStep == 1 ? Icons.phonelink_lock : Icons.sms,
+                    currentStep == 1 ? Icons.lock_reset : Icons.verified_user,
                     color: isuGreen,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    currentStep == 1 ? '2FA Verification' : 'Enter SMS Code',
+                    currentStep == 1 ? 'Reset Password' : 'Enter Code',
                     style: const TextStyle(fontSize: 18),
                   ),
                 ],
@@ -270,7 +301,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
-                                "Enter your official @isu.edu.ph email. A 6-digit SMS verification code will be sent to your registered phone number.",
+                                "Enter your official @isu.edu.ph email. A 6-digit code will be sent via push notification to your phone and to your inbox.",
                                 style: TextStyle(fontSize: 13, color: Colors.grey),
                               ),
                               const SizedBox(height: 16),
@@ -307,7 +338,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                "A 6-digit code was sent to the mobile phone linked to:\n${emailController.text.trim()}",
+                                "A 6-digit code was pushed to your device and emailed to:\n${emailController.text.trim()}",
                                 style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w500,
@@ -319,7 +350,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 controller: codeController,
                                 keyboardType: TextInputType.number,
                                 decoration: const InputDecoration(
-                                  labelText: 'SMS Code',
+                                  labelText: 'Verification Code',
                                   hintText: 'e.g., 123456',
                                   border: OutlineInputBorder(),
                                   prefixIcon: Icon(Icons.pin, color: isuGreen),
@@ -328,7 +359,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                                 validator: (v) => v!.trim().isEmpty
-                                    ? 'Enter the code sent to your phone.'
+                                    ? 'Enter the 6-digit code.'
                                     : null,
                               ),
                               const SizedBox(height: 12),

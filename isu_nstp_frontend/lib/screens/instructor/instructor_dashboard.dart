@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../login_screen.dart';
+import '../profile_screen.dart';
 import 'instructor_settings_screen.dart';
 import 'instructor_monitor_screen.dart';
 import 'instructor_classes_screen.dart';
@@ -24,6 +25,18 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
         foregroundColor: Colors.white,
         elevation: 2,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.account_circle),
+            tooltip: 'My Profile',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ProfileScreen(user: widget.user),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',

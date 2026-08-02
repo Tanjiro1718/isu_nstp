@@ -11,6 +11,11 @@ from .views import (
     UserViewSet,
     SystemSettingsAPIView,
     PasswordResetAPIView,
+    RequestPasswordResetCodeAPIView,
+    ConfirmPasswordResetAPIView,
+    RequestChangePasswordCodeAPIView,
+    ConfirmChangePasswordAPIView,
+    RegisterDeviceTokenAPIView,
     SendVerificationCodeAPIView,
     VerifyOTPAPIView,
     ClassGroupListCreateAPIView,
@@ -26,6 +31,8 @@ from .views import (
     CheckOutAPIView,
     OpenCheckOutAPIView,
     SessionPresenceRosterAPIView,
+    DirectorOverviewAPIView,
+    DirectorClassSessionsAPIView,
 )
 
 
@@ -48,9 +55,22 @@ urlpatterns = [
     path('attendance/presence/respond/', RespondPresenceCheckAPIView.as_view(), name='api-presence-respond'),
     path('attendance/check-out/open/', OpenCheckOutAPIView.as_view(), name='api-open-checkout'),
     path('attendance/session/roster/', SessionPresenceRosterAPIView.as_view(), name='api-session-roster'),
+
+    # --- Director oversight ---
+    path('director/overview/', DirectorOverviewAPIView.as_view(), name='api-director-overview'),
+    path('director/classes/<int:pk>/sessions/', DirectorClassSessionsAPIView.as_view(), name='api-director-class-sessions'),
     
     # 4. Settings & Security
     path('system-settings/', SystemSettingsAPIView.as_view(), name='system-settings'),
+    # Forgot password: request a code (push + email), then confirm it.
+    path('password-reset/request-code/', RequestPasswordResetCodeAPIView.as_view(), name='api-password-reset-request-code'),
+    path('password-reset/confirm/', ConfirmPasswordResetAPIView.as_view(), name='api-password-reset-confirm'),
+    # In-app change password (Profile screen): needs the current password.
+    path('change-password/request-code/', RequestChangePasswordCodeAPIView.as_view(), name='api-change-password-request-code'),
+    path('change-password/confirm/', ConfirmChangePasswordAPIView.as_view(), name='api-change-password-confirm'),
+    # Lets any role register its device so pushes reach them.
+    path('device-token/', RegisterDeviceTokenAPIView.as_view(), name='api-device-token'),
+    # Legacy temp-password reset, kept for older app builds.
     path('password-reset/', PasswordResetAPIView.as_view(), name='api-password-reset'),
     path('send-code/', SendVerificationCodeAPIView.as_view(), name='send-verification-code'),
     path('verify-code/', VerifyOTPAPIView.as_view(), name='verify-verification-code'),
