@@ -212,7 +212,8 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
     final emailController = TextEditingController();
     final passwordController = TextEditingController();
 
-    String selectedRole = 'student';
+    // Students are deliberately not creatable here - see the role dropdown.
+    String selectedRole = 'instructor';
     bool obscurePassword = true; 
 
     showDialog(
@@ -270,10 +271,19 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                       DropdownButtonFormField<String>(
                         initialValue: selectedRole,
                         decoration: const InputDecoration(labelText: 'Role'),
-                        items: ['student', 'instructor', 'director', 'admin']
+                        // Staff roles only. Students register themselves so the
+                        // ID-picture and email-verification steps still run;
+                        // an account minted here would skip both.
+                        items: ['instructor', 'director', 'admin']
                             .map((role) => DropdownMenuItem(value: role, child: Text(role.toUpperCase())))
                             .toList(),
                         onChanged: (value) => setStateDialog(() => selectedRole = value!),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Students cannot be added here. They sign up through '
+                        'the app, then appear in this list for approval.',
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       const SizedBox(height: 16),
                     ],

@@ -81,6 +81,10 @@ class ApiConfig {
   /// Classes the signed-in student belongs to.
   static String get myClassesUrl => '$baseUrl/api/my-classes/';
 
+  /// Every session the student was expected at, attended or not.
+  static String myAttendanceHistoryUrl(int studentUserId) =>
+      '$baseUrl/api/attendance/my-history/?student_id=$studentUserId';
+
   // ---------------------------------------------------------------
   // Director oversight
   // ---------------------------------------------------------------

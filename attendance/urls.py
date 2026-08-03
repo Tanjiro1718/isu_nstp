@@ -33,6 +33,7 @@ from .views import (
     SessionPresenceRosterAPIView,
     DirectorOverviewAPIView,
     DirectorClassSessionsAPIView,
+    StudentAttendanceHistoryAPIView,
 )
 
 
@@ -55,6 +56,8 @@ urlpatterns = [
     path('attendance/presence/respond/', RespondPresenceCheckAPIView.as_view(), name='api-presence-respond'),
     path('attendance/check-out/open/', OpenCheckOutAPIView.as_view(), name='api-open-checkout'),
     path('attendance/session/roster/', SessionPresenceRosterAPIView.as_view(), name='api-session-roster'),
+    # Student-facing history: every session they were expected at.
+    path('attendance/my-history/', StudentAttendanceHistoryAPIView.as_view(), name='api-my-attendance-history'),
 
     # --- Director oversight ---
     path('director/overview/', DirectorOverviewAPIView.as_view(), name='api-director-overview'),

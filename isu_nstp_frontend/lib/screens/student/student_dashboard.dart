@@ -8,8 +8,9 @@ import '../../services/class_service.dart';
 import '../../services/presence_service.dart';
 import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
-import '../login_screen.dart';
+import '../../widgets/logout_helper.dart';
 import '../profile_screen.dart';
+import 'attendance_history_screen.dart';
 import 'student_checkin_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
@@ -40,7 +41,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
   /// and the TextField then rebuilds against a disposed controller.
   final TextEditingController _joinCodeController = TextEditingController();
 
-  // --- Face Unlock protection for profile details ---
+  // --- Device-lock protection for profile details ---
   bool _profileLockEnabled = false;
   bool _biometricAvailable = false;
 
@@ -77,11 +78,25 @@ class _StudentDashboardState extends State<StudentDashboard> {
       );
       if (!mounted) return;
 
-      if (result == LockResult.unavailable) {
+      if (result == LockResult.notEnrolled) {
         _showSnackBar(
-          'No face or fingerprint is set up on this device. Add one in your '
-          'device settings first.',
+          'No screen lock is set up on this device. Add a face, fingerprint, '
+          'or PIN in your device settings first.',
           Colors.orange,
+        );
+        return;
+      }
+      if (result == LockResult.lockedOut) {
+        _showSnackBar(
+          'Too many attempts. Unlock your device the usual way, then try again.',
+          Colors.orange,
+        );
+        return;
+      }
+      if (result == LockResult.error) {
+        _showSnackBar(
+          'Could not open the verification prompt on this device.',
+          Colors.red,
         );
         return;
       }
@@ -96,7 +111,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
     setState(() => _profileLockEnabled = enable);
     _showSnackBar(
       enable
-          ? 'Profile details are now protected by Face Unlock.'
+          ? 'Profile details are now protected by your device lock.'
           : 'Profile protection turned off.',
       enable ? isuGreen : Colors.grey.shade700,
     );
@@ -402,13 +417,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',
-            onPressed: () {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-                (route) => false,
-              );
-            },
+            onPressed: () => LogoutHelper.confirmAndLogout(context),
           ),
         ],
       ),
@@ -467,9 +476,12 @@ class _StudentDashboardState extends State<StudentDashboard> {
               icon: Icons.history_edu,
               iconColor: Colors.orange,
               onTap: () {
-                _showSnackBar(
-                  'Attendance History screen coming soon!',
-                  Colors.blue,
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        AttendanceHistoryScreen(user: _currentUser),
+                  ),
                 );
               },
             ),
@@ -900,8 +912,8 @@ class _StudentDashboardState extends State<StudentDashboard> {
             ],
           ),
           content: SingleChildScrollView(
-            // With protection on the details stay hidden until Face Unlock
-            // passes. Gating here rather than on the button means the lock
+            // With protection on the details stay hidden until the device
+            // check passes. Gating here rather than on the button means the lock
             // re-arms every time the dialog is reopened.
             child: _profileLockEnabled
                 ? BiometricLockWidget(child: _buildProfileDetails())
@@ -1027,9 +1039,11 @@ class _StudentDashboardState extends State<StudentDashboard> {
     );
   }
 
-  /// Lets the student put their personal details behind the device's own face
-  /// or fingerprint check. Nothing biometric is uploaded or stored by the app -
-  /// the match happens inside the OS, and only this on/off flag is saved.
+  /// Lets the student put their personal details behind the device's own lock.
+  ///
+  /// Nothing biometric is uploaded or stored by the app - the match happens
+  /// inside the OS, and only this on/off flag is saved. Which methods the
+  /// prompt offers is entirely the OS's call.
   Widget _buildProfileLockCard() {
     return Card(
       elevation: 3,
@@ -1048,10 +1062,14 @@ class _StudentDashboardState extends State<StudentDashboard> {
             'Protect My Profile',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
+          // Deliberately vague about the method: Android decides what the
+          // system prompt offers, and most phones withhold face unlock from
+          // third-party apps, so promising "Face Unlock" here would be a lie.
           subtitle: Text(
             _biometricAvailable
-                ? 'Require Face Unlock before showing your profile details'
-                : 'Set up face or fingerprint unlock on this device to use this',
+                ? 'Require your device unlock (fingerprint, face, or PIN) '
+                    'before showing your profile details'
+                : 'Set up a screen lock on this device to use this',
             style: const TextStyle(fontSize: 13),
           ),
         ),

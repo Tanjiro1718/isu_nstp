@@ -9,6 +9,11 @@ import secrets
 # never sets an exact time, so a student cannot predict the next prompt.
 PRESENCE_GAP_MIN_MINUTES = 20
 PRESENCE_GAP_MAX_MINUTES = 40
+# Quiet period after a ping before the next one may be scheduled. Without this
+# two pings could land 20 minutes apart and feel like harassment.
+PRESENCE_COOLDOWN_MINUTES = 60
+# Every activity runs for a fixed 4 hours; instructors don't choose this.
+SESSION_DURATION_MINUTES = 240
 
 from django.dispatch import receiver
 from django.db.models.signals import post_save
@@ -113,8 +118,11 @@ class AttendanceSession(models.Model):
     # --- Presence verification rules ---
     # How long after the session opens a student may still submit their selfie.
     photo_window_minutes = models.PositiveIntegerField(default=5)
-    # Total length of the activity; random presence pings are spread across it.
-    duration_minutes = models.PositiveIntegerField(default=120)
+    # Fixed 4-hour activity length. Set by the server, not the instructor, so
+    # the presence schedule below always has a predictable window to fill.
+    duration_minutes = models.PositiveIntegerField(
+        default=SESSION_DURATION_MINUTES
+    )
     # How many random "are you still there?" pings each student receives.
     presence_check_count = models.PositiveIntegerField(default=2)
     # How long a student has to answer one ping before it counts as missed.
@@ -188,9 +196,14 @@ class AttendanceRecord(models.Model):
         """
         Drops randomly timed pings into the remaining session window.
 
-        Called right after a successful check-in. Each ping lands a random
-        20-40 minutes after the one before it, so the student cannot predict
-        (or share) when the next prompt will arrive.
+        Called right after a successful check-in. The first ping lands a random
+        20-40 minutes after time-in. Every ping after that waits out a 1 hour
+        cooldown first, then adds another random 20-40 minutes - so the student
+        can never predict (or share) the exact moment, but is also never pinged
+        twice in quick succession.
+
+        With the default 4 hour window that puts ping 1 at 20-40 minutes and
+        ping 2 at 100-140 minutes after time-in.
         """
         session = self.session
         count = session.presence_check_count
@@ -205,6 +218,10 @@ class AttendanceRecord(models.Model):
         checks = []
         moment = now
         for i in range(count):
+            # The cooldown applies between pings, not before the first one.
+            if i > 0:
+                moment += datetime.timedelta(minutes=PRESENCE_COOLDOWN_MINUTES)
+
             gap = random.randint(PRESENCE_GAP_MIN_MINUTES, PRESENCE_GAP_MAX_MINUTES)
             moment += datetime.timedelta(minutes=gap)
             # A short activity just gets fewer pings, rather than ones that

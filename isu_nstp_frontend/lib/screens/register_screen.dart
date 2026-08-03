@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import '../config/api_config.dart';
 import '../services/notification_service.dart';
+import '../utils/password_policy.dart';
+import '../widgets/password_strength_meter.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -40,7 +42,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final ImagePicker _picker = ImagePicker();
 
   @override
+  void initState() {
+    super.initState();
+    // Redraw the strength meter as the student types.
+    _passwordController.addListener(_onPasswordChanged);
+  }
+
+  void _onPasswordChanged() => setState(() {});
+
+  @override
   void dispose() {
+    _passwordController.removeListener(_onPasswordChanged);
     _firstNameController.dispose();
     _middleNameController.dispose();
     _lastNameController.dispose();
@@ -471,8 +483,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
               ),
             ),
-            validator: (value) => value!.length < 6 ? 'Password must be at least 6 characters.' : null,
+            // Same rule the server enforces: 8+ characters and a number.
+            validator: PasswordPolicy.validate,
           ),
+          PasswordStrengthMeter(password: _passwordController.text),
           const SizedBox(height: 16),
 
           // 8. Confirm Password

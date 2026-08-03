@@ -5,7 +5,10 @@ import 'package:http/http.dart' as http;
 
 import '../../models/user_model.dart';
 import '../config/api_config.dart';
-import '../services/notification_service.dart';
+import '../services/device_token_service.dart';
+import '../services/session_service.dart';
+import '../utils/password_policy.dart';
+import '../widgets/password_strength_meter.dart';
 import 'admin/admin_dashboard.dart';
 import 'director/director_dashboard.dart';
 import 'instructor/instructor_dashboard.dart';
@@ -77,11 +80,16 @@ class _LoginScreenState extends State<LoginScreen> {
         // Construct UserModel safely using null-safe constructor
         final user = UserModel.fromJson(userMap);
 
+        // Remember the session so closing the app does not sign them out.
+        // Awaited so the record is on disk before we leave this screen.
+        await SessionService.saveUser(user);
+        if (!mounted) return;
+
         _showSnackBar('Welcome back, ${user.username}!', isuGreen);
 
         // Bind this device to the account so password codes and other alerts
         // can be pushed. Fire-and-forget: a failure here must not block login.
-        _registerDeviceToken(user.id);
+        DeviceTokenService.register(user.id);
 
         // Role-based Navigation Routing
         Widget destination;
@@ -124,31 +132,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// Sends this device's FCM token to the backend for [userId].
-  ///
-  /// Registration only captured a token at signup, which left every existing
-  /// account (and every instructor/director/admin) without one. Doing it on
-  /// each login also keeps the token fresh after a reinstall.
-  Future<void> _registerDeviceToken(int userId) async {
-    try {
-      final token = await NotificationService().getDeviceToken();
-      if (token == null || token.isEmpty) return;
-
-      await http
-          .post(
-            Uri.parse('${ApiConfig.baseUrl}/api/device-token/'),
-            headers: const {
-              'Content-Type': 'application/json',
-              'ngrok-skip-browser-warning': 'true',
-            },
-            body: jsonEncode({'user_id': userId, 'fcm_token': token}),
-          )
-          .timeout(const Duration(seconds: 8));
-    } catch (e) {
-      // Push is a nice-to-have; the email fallback still delivers codes.
-      debugPrint('Could not register device token: $e');
-    }
-  }
 
   String _getLoginErrorMessage(http.Response response) {
     try {
@@ -246,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // --- Multi-Step Password Reset Dialog (push notification + email) ---
-  void _showForgotPasswordDialog() {
+  Future<void> _showForgotPasswordDialog() async {
     final emailController = TextEditingController();
     final codeController = TextEditingController();
     final newPasswordController = TextEditingController();
@@ -259,19 +242,17 @@ class _LoginScreenState extends State<LoginScreen> {
     bool isSubmitting = false;
     bool obscureNewPassword = true;
 
-    showDialog(
+    await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            void closeDialog() {
-              emailController.dispose();
-              codeController.dispose();
-              newPasswordController.dispose();
-              confirmPasswordController.dispose();
-              Navigator.pop(dialogContext);
-            }
+            // Only closes the route. Disposing the controllers here would kill
+            // them while the TextFields still depend on them, which trips the
+            // '_dependents.isEmpty' assertion - they are disposed below once
+            // the dialog has fully gone.
+            void closeDialog() => Navigator.pop(dialogContext);
 
             return AlertDialog(
               shape: RoundedRectangleBorder(
@@ -387,11 +368,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                     },
                                   ),
                                 ),
-                                validator: (v) {
-                                  if (v!.isEmpty) return 'Enter a new password.';
-                                  if (v.length < 6) return 'Must be at least 6 characters.';
-                                  return null;
-                                },
+                                // Matches the rule the server enforces.
+                                validator: PasswordPolicy.validate,
+                                onChanged: (_) => setDialogState(() {}),
+                              ),
+                              PasswordStrengthMeter(
+                                password: newPasswordController.text,
                               ),
                               const SizedBox(height: 12),
                               TextFormField(
@@ -481,6 +463,12 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       },
     );
+
+    // Safe now: the dialog and its fields are gone.
+    emailController.dispose();
+    codeController.dispose();
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
   }
 
   void _showSnackBar(String message, Color color) {

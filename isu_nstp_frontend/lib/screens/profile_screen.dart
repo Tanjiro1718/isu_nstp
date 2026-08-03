@@ -6,6 +6,9 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../models/user_model.dart';
+import '../services/profile_lock_service.dart';
+import '../utils/password_policy.dart';
+import '../widgets/password_strength_meter.dart';
 
 /// Profile / account details, shared by every role (student, instructor,
 /// director, admin).
@@ -96,6 +99,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // ------------------------------------------------------ Change password flow
+
+  /// Requires a biometric match before the change-password sheet will open.
+  ///
+  /// Stops someone who picks up an unlocked phone from taking over the account.
+  /// The PIN fallback is deliberately refused here (`biometricOnly: true`) so
+  /// the shoulder-surfed screen lock code is not enough on its own - but only
+  /// when a biometric is actually enrolled, otherwise there would be no way in
+  /// at all. On devices with none, the current password plus the emailed code
+  /// remain the check.
+  Future<void> _verifyThenChangePassword() async {
+    final hasBiometric = await ProfileLockService.hasBiometricEnrolled();
+    if (!mounted) return;
+
+    if (!hasBiometric) {
+      _showChangePasswordSheet();
+      return;
+    }
+
+    final result = await ProfileLockService.authenticate(
+      reason: 'Verify your identity to change your password',
+      biometricOnly: true,
+    );
+    if (!mounted) return;
+
+    switch (result) {
+      case LockResult.success:
+        _showChangePasswordSheet();
+      case LockResult.failed:
+        _showLockMessage(
+          'Verification failed. Your password was not changed.',
+          Colors.red,
+        );
+      case LockResult.lockedOut:
+        _showLockMessage(
+          'Too many attempts. Unlock your device the usual way, then try again.',
+          Colors.orange,
+        );
+      case LockResult.notEnrolled:
+      case LockResult.error:
+        // The enrolment check passed a moment ago, so this is a device quirk
+        // rather than a real absence. Fall back rather than trap the user.
+        _showChangePasswordSheet();
+    }
+  }
+
+  void _showLockMessage(String message, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   void _showChangePasswordSheet() {
     final currentPasswordController = TextEditingController();
@@ -336,15 +394,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       () => obscureNew = !obscureNew),
                                 ),
                               ),
-                              validator: (v) {
-                                if (v == null || v.isEmpty) {
-                                  return 'Enter a new password.';
-                                }
-                                if (v.length < 6) {
-                                  return 'Must be at least 6 characters.';
-                                }
-                                return null;
-                              },
+                              // Same rule the server enforces: 8+ chars, 1 number.
+                              validator: PasswordPolicy.validate,
+                              onChanged: (_) => setSheetState(() {}),
+                            ),
+                            PasswordStrengthMeter(
+                              password: newPasswordController.text,
                             ),
                             const SizedBox(height: 12),
                             TextFormField(
@@ -585,12 +640,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   leading: const Icon(Icons.lock_reset, color: isuGreen),
                   title: const Text('Change Password'),
                   subtitle: const Text(
-                    'Verify with your current password, then confirm the code '
-                    'sent to your phone',
+                    'Confirm it is you on this device, then verify with your '
+                    'current password and the code sent to your phone',
                     style: TextStyle(fontSize: 12),
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: _showChangePasswordSheet,
+                  onTap: _verifyThenChangePassword,
                 ),
                 const SizedBox(height: 8),
               ],

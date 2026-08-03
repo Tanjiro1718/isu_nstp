@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
-import '../login_screen.dart';
+import '../../widgets/logout_helper.dart';
 import '../profile_screen.dart';
 import 'director_oversight_screen.dart';
 
@@ -33,13 +33,7 @@ class DirectorDashboard extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',
-            onPressed: () {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-                (route) => false, 
-              );
-            },
+            onPressed: () => LogoutHelper.confirmAndLogout(context),
           ),
         ],
       ),

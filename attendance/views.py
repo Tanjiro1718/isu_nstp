@@ -46,6 +46,7 @@ from .fcm_utils import (
     send_password_changed_alert,
 )
 from .presence import dispatch_due_presence_checks
+from .password_policy import password_error
 from rest_framework.permissions import IsAuthenticated
 
 User = get_user_model()
@@ -65,6 +66,15 @@ class RegisterView(APIView):
         email = request.data.get('email', '').strip().lower()
         password = request.data.get('password')
         id_picture_front = request.FILES.get('id_picture_front')
+
+        # The app validates as you type, but that is only a convenience - a
+        # direct POST would sail past it, so re-check here.
+        pw_problem = password_error(password or '')
+        if pw_problem:
+            return Response(
+                {'error': pw_problem},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Grab the student's real name
         first_name = request.data.get('first_name', '').strip()
@@ -478,9 +488,10 @@ class ConfirmPasswordResetAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if len(new_password) < 6:
+        pw_problem = password_error(new_password)
+        if pw_problem:
             return Response(
-                {'detail': 'Password must be at least 6 characters.'},
+                {'detail': pw_problem},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -643,9 +654,10 @@ class ConfirmChangePasswordAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if len(new_password) < 6:
+        pw_problem = password_error(new_password)
+        if pw_problem:
             return Response(
-                {'detail': 'Password must be at least 6 characters.'},
+                {'detail': pw_problem},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2061,5 +2073,148 @@ class DirectorClassSessionsAPIView(APIView):
             'student_count': students,
             'sessions': sessions,
         })
+
+
+# ====================================================================================
+# STUDENT ATTENDANCE HISTORY
+# ====================================================================================
+
+class StudentAttendanceHistoryAPIView(APIView):
+    """Every session a student was expected at, attended or not.
+
+    Listing only their AttendanceRecords would quietly hide the absences, which
+    are the entries that actually matter to a student checking whether they are
+    short on hours. So we start from the sessions of the classes they belong to
+    and left-join their records, synthesising an 'Absent' row where none exists.
+
+    Sessions that opened before the student enrolled are skipped - they were
+    never expected at those, and counting them would invent absences.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        student_id = request.query_params.get('student_id')  # User ID
+        if not student_id:
+            return Response({'error': 'student_id is required'}, status=400)
+
+        try:
+            student_profile = StudentProfile.objects.get(user_id=student_id)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=404)
+
+        # 'pending' students are excluded: their membership is not yet approved,
+        # so they are not on the hook for that class's sessions.
+        enrollments = ClassEnrollment.objects.filter(
+            student=student_profile, status='active'
+        ).select_related('class_group')
+
+        # Nothing joined yet - an empty history, not an error.
+        if not enrollments:
+            return Response({'summary': self._summary([]), 'records': []})
+
+        joined_at_by_class = {e.class_group_id: e.joined_at for e in enrollments}
+
+        sessions = AttendanceSession.objects.filter(
+            class_group_id__in=joined_at_by_class.keys()
+        ).select_related('class_group').order_by('-date_time')
+
+        records_by_session = {
+            record.session_id: record
+            for record in AttendanceRecord.objects.filter(
+                student=student_profile, session__in=sessions
+            )
+        }
+
+        rows = []
+        for session in sessions:
+            # Skip anything that ran before they joined the class.
+            joined_at = joined_at_by_class.get(session.class_group_id)
+            if joined_at and session.date_time < joined_at:
+                continue
+
+            record = records_by_session.get(session.id)
+            rows.append(self._row(session, record))
+
+        return Response({'summary': self._summary(rows), 'records': rows})
+
+    def _row(self, session, record):
+        """Flatten one session + optional record into a display row."""
+        class_group = session.class_group
+        base = {
+            'session_id': session.id,
+            'title': session.title,
+            'class_name': class_group.name if class_group else 'Unassigned',
+            'component': (class_group.component or '') if class_group else '',
+            'date_time': timezone.localtime(session.date_time).strftime('%m/%d/%Y %I:%M %p'),
+            'date_sort': session.date_time.isoformat(),
+        }
+
+        if record is None:
+            # No record at all: they never timed in.
+            base.update({
+                'status': 'Absent',
+                'attended': False,
+                'time_in': None,
+                'time_out': None,
+                'presence_status': None,
+                'missed_checks': 0,
+                'responded_checks': 0,
+                'total_checks': 0,
+                'selfie_verified': False,
+                'note': 'No time-in recorded for this activity.',
+            })
+            return base
+
+        checks = record.presence_checks.all()
+        responded = sum(1 for c in checks if c.status == 'responded')
+
+        # A failed presence check means they timed in but could not prove they
+        # stayed, so surface that rather than a bare 'Present'.
+        if record.presence_status == 'failed':
+            note = (
+                f'Timed in, but missed {record.missed_checks} presence check(s), '
+                'so attendance could not be verified.'
+            )
+        elif record.check_out_at is None:
+            note = 'Timed in but never timed out.'
+        else:
+            note = None
+
+        base.update({
+            'status': record.status,
+            'attended': True,
+            'time_in': timezone.localtime(record.timestamp).strftime('%I:%M %p'),
+            'time_out': (
+                timezone.localtime(record.check_out_at).strftime('%I:%M %p')
+                if record.check_out_at else None
+            ),
+            'presence_status': record.presence_status,
+            'missed_checks': record.missed_checks,
+            'responded_checks': responded,
+            'total_checks': len(checks),
+            'selfie_verified': record.selfie_verified,
+            'note': note,
+        })
+        return base
+
+    def _summary(self, rows):
+        """Headline counts for the top of the history screen."""
+        total = len(rows)
+        # 'Verified' is the honest measure: timed in AND presence confirmed.
+        verified = sum(
+            1 for r in rows
+            if r['attended'] and r.get('presence_status') != 'failed'
+        )
+        absent = sum(1 for r in rows if not r['attended'])
+        unverified = total - verified - absent
+
+        return {
+            'total_sessions': total,
+            'verified': verified,
+            'unverified': unverified,
+            'absent': absent,
+            'attendance_rate': round((verified / total) * 100, 1) if total else 0.0,
+        }
 
 

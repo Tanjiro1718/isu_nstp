@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../services/profile_lock_service.dart';
 
-/// Hides [child] behind a device biometric check.
+/// Hides [child] behind the device's own lock-screen check.
 ///
-/// Until the student passes Face Unlock / Face ID (or falls back to their
-/// device PIN) they see a tappable placeholder instead of their personal
-/// details. Unlocking happens inline so they stay in the same dialog, and the
-/// unlock lasts only as long as this widget is on screen - reopening the
-/// profile prompts again.
+/// Until the student passes the system prompt - fingerprint, face, or PIN,
+/// whichever the OS decides to offer - they see a tappable placeholder instead
+/// of their personal details. Unlocking happens inline so they stay in the same
+/// dialog, and the unlock lasts only as long as this widget is on screen -
+/// reopening the profile prompts again.
 class BiometricLockWidget extends StatefulWidget {
   /// The sensitive content to reveal once verified.
   final Widget child;
@@ -52,9 +52,12 @@ class _BiometricLockWidgetState extends State<BiometricLockWidget> {
           _unlocked = true;
         case LockResult.failed:
           _error = 'Not recognized. Tap to try again.';
-        case LockResult.unavailable:
-          // Nothing enrolled on this device. Rather than trapping the student
-          // out of their own data, explain and let them through.
+        case LockResult.lockedOut:
+          _error = 'Too many attempts. Unlock your device, then tap to retry.';
+        case LockResult.notEnrolled:
+        case LockResult.error:
+          // We cannot prompt on this device. Rather than trapping the student
+          // out of their own data, let them through.
           _unlocked = true;
       }
     });
@@ -95,7 +98,8 @@ class _BiometricLockWidgetState extends State<BiometricLockWidget> {
             ),
             const SizedBox(height: 6),
             Text(
-              _error ?? 'Tap to verify with Face Unlock',
+              // The OS picks the method, so do not name one here.
+              _error ?? 'Tap to verify your identity',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
@@ -113,7 +117,7 @@ class _BiometricLockWidgetState extends State<BiometricLockWidget> {
               FilledButton.icon(
                 onPressed: _tryUnlock,
                 style: FilledButton.styleFrom(backgroundColor: isuGreen),
-                icon: const Icon(Icons.face, size: 18),
+                icon: const Icon(Icons.lock_open, size: 18),
                 label: const Text('Verify to view'),
               ),
           ],

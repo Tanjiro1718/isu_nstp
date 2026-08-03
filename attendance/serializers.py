@@ -193,6 +193,10 @@ class SessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceSession
         fields = '__all__'
+        # Every activity is a fixed 4 hours. The instructor's form doesn't ask
+        # for it, and marking it read-only means a hand-crafted request can't
+        # stretch the window either - the presence schedule depends on it.
+        read_only_fields = ['duration_minutes']
 
     def get_class_name(self, obj):
         return obj.class_group.name if obj.class_group else None
