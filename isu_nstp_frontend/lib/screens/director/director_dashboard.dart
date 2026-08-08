@@ -1,31 +1,53 @@
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
+import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
 import '../profile_screen.dart';
 import 'director_oversight_screen.dart';
 
-class DirectorDashboard extends StatelessWidget {
+class DirectorDashboard extends StatefulWidget {
   final UserModel user;
-  
+
   const DirectorDashboard({super.key, required this.user});
+
+  @override
+  State<DirectorDashboard> createState() => _DirectorDashboardState();
+}
+
+class _DirectorDashboardState extends State<DirectorDashboard> {
+  int _currentIndex = 0;
+
+  static const _titles = [
+    'Campus Analytics',
+    'Instructor Compliance',
+    'Export Master Data',
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: const Text("Director Portal"),
-        backgroundColor: Colors.deepOrange.shade700, 
-        foregroundColor: Colors.white,
-        elevation: 2,
+        title: Text(
+          _titles[_currentIndex],
+          style: const TextStyle(
+            color: Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 20,
+          ),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 1,
+        iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
           IconButton(
-            icon: const Icon(Icons.account_circle),
+            icon: const Icon(Icons.account_circle_outlined),
             tooltip: 'My Profile',
             onPressed: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => ProfileScreen(user: user),
+                  builder: (context) => ProfileScreen(user: widget.user),
                 ),
               );
             },
@@ -37,114 +59,136 @@ class DirectorDashboard extends StatelessWidget {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Welcome, Director ${user.username}!",
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const SizedBox(height: 4),
-            const Text(
-              "Oversee campus analytics, instructor compliance, and master records.",
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 32),
-
-            // Button 1: Campus Analytics
-            _buildDashboardCard(
-              context,
-              title: 'Campus Analytics Overview',
-              subtitle: 'Attendance health for every class and component',
-              icon: Icons.pie_chart,
-              iconColor: Colors.deepOrange,
-              onTap: () => _openOversight(context),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Button 2: Instructor Monitoring
-            _buildDashboardCard(
-              context,
-              title: 'Instructor Compliance',
-              subtitle: 'See which instructor handles each class and how they are doing',
-              icon: Icons.assignment_ind,
-              iconColor: Colors.blueGrey,
-              // Same screen - it opens on the "By Instructor" tab.
-              onTap: () => _openOversight(context, initialTab: 1),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Button 3: Master Data Export
-            _buildDashboardCard(
-              context,
-              title: 'Export Master Data',
-              subtitle: 'Download complete attendance spreadsheets for CHED/NSTP office',
-              icon: Icons.download_for_offline,
-              iconColor: Colors.green.shade700,
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Master Data Export coming soon!')),
-                );
-              },
-            ),
-          ],
+      // The first two tabs are the same oversight screen opened on its "By
+      // Class" and "By Instructor" views, exactly as the old cards did.
+      body: LazyTabView(
+        currentIndex: _currentIndex,
+        builders: [
+          (_) => const DirectorOversightScreen(initialTab: 0, embedded: true),
+          (_) => const DirectorOversightScreen(initialTab: 1, embedded: true),
+          (_) => _ExportMasterDataTab(user: widget.user),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) => setState(() => _currentIndex = index),
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: Colors.white,
+        selectedItemColor: Colors.black87,
+        unselectedItemColor: Colors.grey[500],
+        selectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
         ),
+        unselectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 12,
+        ),
+        elevation: 8,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.pie_chart_outline),
+            activeIcon: Icon(Icons.pie_chart),
+            label: 'Analytics',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.assignment_ind_outlined),
+            activeIcon: Icon(Icons.assignment_ind),
+            label: 'Instructors',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.download_outlined),
+            activeIcon: Icon(Icons.download),
+            label: 'Export',
+          ),
+        ],
       ),
     );
   }
+}
 
-  /// Both oversight cards land on the same screen; [initialTab] picks whether
-  /// it opens grouped by class (0) or by instructor (1).
-  void _openOversight(BuildContext context, {int initialTab = 0}) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => DirectorOversightScreen(initialTab: initialTab),
-      ),
-    );
-  }
+/// Placeholder tab for the CHED/NSTP office spreadsheet export. Keeps the
+/// greeting that used to live at the top of the dashboard.
+class _ExportMasterDataTab extends StatelessWidget {
+  final UserModel user;
 
-  Widget _buildDashboardCard(
-    BuildContext context, {
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Color iconColor,
-    required VoidCallback onTap,
-  }) {
-    return Card(
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12.0),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: iconColor.withValues(alpha: 0.15),
-              child: Icon(icon, color: iconColor),
+  const _ExportMasterDataTab({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          'Welcome, Director ${user.username}!',
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Oversee campus analytics, instructor compliance, and master records.',
+          style: TextStyle(fontSize: 14, color: Colors.grey),
+        ),
+        const SizedBox(height: 28),
+        Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor:
+                          Colors.green.shade700.withValues(alpha: 0.15),
+                      child: Icon(
+                        Icons.download_for_offline,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        'Export Master Data',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Download complete attendance spreadsheets for the CHED/NSTP '
+                  'office.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Master Data Export coming soon!'),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.download),
+                    label: const Text('Download spreadsheet'),
+                  ),
+                ),
+              ],
             ),
-            title: Text(
-              title, 
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
-            ),
-            subtitle: Text(subtitle),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
           ),
         ),
-      ),
+      ],
     );
   }
 }

@@ -36,7 +36,6 @@ class StudentCheckInScreen extends StatefulWidget {
 
 class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
   CameraController? _cameraController;
-  XFile? _capturedSelfie;
   Position? _currentPosition;
   bool _isLoading = false;
   double _distanceFromTarget = -1.0;
@@ -182,7 +181,7 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
         if (!silent) _isLoading = false;
         if (distance > widget.allowedRadiusMeters) {
           _statusMessage =
-              "Too far to check in. Follow the directions below.";
+              "Too far to check in. Tap the location pill for map guidance.";
         } else {
           _statusMessage =
               "Location verified. You are within range (${distance.toStringAsFixed(1)}m).";
@@ -230,7 +229,6 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
     try {
       // Step 1: Snap verification selfie
       final XFile image = await _cameraController!.takePicture();
-      setState(() => _capturedSelfie = image);
 
       // Step 2: Prepare multipart payload data package for Django API
       var request = http.MultipartRequest(
@@ -297,6 +295,63 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
     }
   }
 
+  /// Shows the full map and walking guidance in a modal sheet.
+  ///
+  /// The map is only worth screen space when the student is actually lost, so
+  /// it lives behind the location pill instead of permanently squeezing the
+  /// camera preview.
+  void _showLocationBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  "Activity Site Location",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(sheetContext),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            LocationGuidanceCard(
+              targetLat: widget.targetLat,
+              targetLng: widget.targetLng,
+              allowedRadiusMeters: widget.allowedRadiusMeters,
+              currentLat: _currentPosition?.latitude,
+              currentLng: _currentPosition?.longitude,
+              distanceMeters: _distanceFromTarget,
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _countdownTimer?.cancel();
@@ -316,143 +371,159 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
         title: const Text("ISU-NSTP GPS Check-In"),
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
+        actions: [
+          // Moved up here so the body is just camera + one clear CTA.
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: "Refresh Location",
+            onPressed: () => _determinePosition(),
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Padding(
               padding: const EdgeInsets.all(16.0),
-              key: UniqueKey(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Camera Preview Container Box
+                  // The camera now gets the whole frame. Distance and the
+                  // countdown float on top of it instead of stacking cards
+                  // underneath and squeezing the preview.
                   Expanded(
-                    flex: 3,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child:
-                          _cameraController != null &&
-                              _cameraController!.value.isInitialized
-                          ? CameraPreview(_cameraController!)
-                          : const Center(
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child:
+                                _cameraController != null &&
+                                    _cameraController!.value.isInitialized
+                                ? CameraPreview(_cameraController!)
+                                : Container(
+                                    color: Colors.black,
+                                    child: const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+
+                        // Tap for the map and walking directions.
+                        Positioned(
+                          top: 12,
+                          left: 16,
+                          right: 16,
+                          child: Center(
+                            child: Material(
+                              color: Colors.black.withValues(alpha: 0.65),
+                              borderRadius: BorderRadius.circular(30),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(30),
+                                onTap: _showLocationBottomSheet,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.location_on,
+                                        color: isWithinBounds
+                                            ? Colors.greenAccent
+                                            : Colors.orangeAccent,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        _distanceFromTarget >= 0
+                                            ? "Site: ${_distanceFromTarget.toStringAsFixed(0)}m away"
+                                            : "Locating site...",
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      const Icon(
+                                        Icons.keyboard_arrow_down,
+                                        color: Colors.white70,
+                                        size: 18,
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
+                          ),
+                        ),
+
+                        // Photo submission countdown.
+                        if (_hasDeadline)
+                          Positioned(
+                            bottom: 12,
+                            left: 12,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _windowExpired
+                                    ? Colors.red.shade900.withValues(alpha: 0.85)
+                                    : Colors.black.withValues(alpha: 0.65),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _windowExpired
+                                        ? Icons.timer_off
+                                        : Icons.timer,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _windowExpired
+                                        ? "Window Closed"
+                                        : "Time: $_formattedTimeLeft",
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
+
                   const SizedBox(height: 16),
 
-                  // The guidance map makes this section taller than a small
-                  // phone can fit, so let everything below the camera scroll.
-                  Expanded(
-                    flex: 4,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                  // Countdown for the photo submission window.
-                  if (_hasDeadline) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 10,
-                        horizontal: 16,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _windowExpired
-                            ? Colors.red.shade50
-                            : (_timeLeft.inSeconds <= 60
-                                  ? Colors.orange.shade50
-                                  : Colors.blue.shade50),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _windowExpired
-                              ? Colors.red.shade200
-                              : (_timeLeft.inSeconds <= 60
-                                    ? Colors.orange.shade300
-                                    : Colors.blue.shade200),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            _windowExpired ? Icons.timer_off : Icons.timer,
-                            size: 20,
-                            color: _windowExpired
-                                ? Colors.red.shade700
-                                : (_timeLeft.inSeconds <= 60
-                                      ? Colors.orange.shade800
-                                      : Colors.blue.shade700),
-                          ),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              _windowExpired
-                                  ? "Photo window closed"
-                                  : "Submit your photo within $_formattedTimeLeft",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: _windowExpired
-                                    ? Colors.red.shade700
-                                    : (_timeLeft.inSeconds <= 60
-                                          ? Colors.orange.shade900
-                                          : Colors.blue.shade900),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-
-                  // Status and Feedback Card Panel Area
-                  Card(
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        children: [
-                          Text(
-                            _statusMessage,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: isWithinBounds ? Colors.green : Colors.red,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const Divider(height: 20),
-                          // Which way to walk, how far is left, and a map.
-                          LocationGuidanceCard(
-                            targetLat: widget.targetLat,
-                            targetLng: widget.targetLng,
-                            allowedRadiusMeters: widget.allowedRadiusMeters,
-                            currentLat: _currentPosition?.latitude,
-                            currentLng: _currentPosition?.longitude,
-                            distanceMeters: _distanceFromTarget,
-                          ),
-                        ],
-                      ),
+                  Text(
+                    _statusMessage,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: isWithinBounds
+                          ? Colors.green.shade700
+                          : Colors.red.shade700,
+                      fontSize: 14,
                     ),
                   ),
-                  const SizedBox(height: 20),
 
-                  // Action buttons
-                  ElevatedButton.icon(
-                    onPressed: _determinePosition,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text("Refresh GPS Position"),
-                  ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
+
                   ElevatedButton(
                     onPressed: (isWithinBounds && !_windowExpired)
                         ? _processCheckIn
@@ -470,10 +541,10 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
                       _windowExpired
                           ? "Photo Window Closed"
                           : "Confirm & Submit Attendance",
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                  ),
-                        ],
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),

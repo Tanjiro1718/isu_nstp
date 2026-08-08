@@ -134,10 +134,28 @@ class AttendanceSession(models.Model):
     is_check_out_open = models.BooleanField(default=False)
     check_out_opened_at = models.DateTimeField(blank=True, null=True)
 
+    # --- Scheduled start & reminder ---
+    # How long before `date_time` the class is warned that attendance is about
+    # to open. The reminder fires once; the session "starts" at `date_time` and
+    # check-in is refused before that moment.
+    reminder_minutes = models.PositiveIntegerField(default=5)
+    reminder_sent_at = models.DateTimeField(blank=True, null=True)
+    start_notified_at = models.DateTimeField(blank=True, null=True)
+
     @property
     def photo_deadline(self):
         """Last moment a check-in selfie is accepted."""
         return self.date_time + datetime.timedelta(minutes=self.photo_window_minutes)
+
+    @property
+    def reminder_at(self):
+        """When the class should be told 'attendance starts in N minutes'."""
+        return self.date_time - datetime.timedelta(minutes=self.reminder_minutes)
+
+    @property
+    def has_started(self):
+        """Whether the scheduled start time has arrived."""
+        return timezone.now() >= self.date_time
 
     @property
     def ends_at(self):
@@ -149,7 +167,16 @@ class AttendanceSession(models.Model):
 
 # 5. Attendance Ledger mapped to Students
 class AttendanceRecord(models.Model):
-    STATUS_CHOICES = (('Present', 'Present'), ('Absent', 'Absent'), ('Late', 'Late'))
+    STATUS_CHOICES = (
+        ('Present', 'Present'),
+        ('Absent', 'Absent'),
+        ('Late', 'Late'),
+        # Set when an instructor approves an excuse. Only ever applied to a
+        # record that was already Absent - approving an excuse must not quietly
+        # downgrade somebody who actually turned up and was marked Present.
+        ('Excused', 'Excused'),
+    )
+
     MODE_CHOICES = (('online', 'Online'), ('offline', 'Offline'))
     PRESENCE_STATUS_CHOICES = (
         ('ok', 'Verified Present'),
@@ -434,5 +461,80 @@ class ClassEnrollment(models.Model):
 
     def __str__(self):
         return f"{self.student} -> {self.class_group.name} [{self.status}]"
+
+
+# 9. Excuse letters: a student's explanation for a missed ping or a no-show
+class AttendanceExcuse(models.Model):
+    """
+    A student's written explanation, reviewed by the instructor who owns the
+    session.
+
+    Two situations produce one:
+
+    * ``missed_check`` - they timed in but ignored a random presence ping, so
+      their record is warned or failed.
+    * ``absent`` - they never timed in at all, so there is no AttendanceRecord.
+      ``record`` stays null in that case, which is why the FK is optional and
+      why the session/student pair (not the record) is what we key on.
+    """
+
+    KIND_CHOICES = (
+        ('missed_check', 'Missed Presence Check'),
+        ('absent', 'Did Not Time In'),
+    )
+    STATUS_CHOICES = (
+        ('pending', 'Awaiting Review'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    )
+
+    session = models.ForeignKey(
+        AttendanceSession, on_delete=models.CASCADE, related_name='excuses'
+    )
+    student = models.ForeignKey(
+        StudentProfile, on_delete=models.CASCADE, related_name='excuses'
+    )
+    # Null for a no-show: there is simply no attendance row to point at.
+    record = models.ForeignKey(
+        AttendanceRecord,
+        on_delete=models.SET_NULL,
+        related_name='excuses',
+        blank=True,
+        null=True,
+    )
+
+    kind = models.CharField(max_length=15, choices=KIND_CHOICES)
+    reason = models.TextField()
+    # Medical certificate, parent's letter, and so on.
+    attachment = models.ImageField(upload_to='attendance/excuses/', blank=True, null=True)
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    # --- Instructor's decision ---
+    reviewed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name='reviewed_excuses',
+        blank=True,
+        null=True,
+        limit_choices_to={'role': 'instructor'},
+    )
+    reviewed_at = models.DateTimeField(blank=True, null=True)
+    # Optional note back to the student, shown with the decision.
+    response_note = models.TextField(blank=True, null=True)
+
+    class Meta:
+        # One excuse per student per activity. Re-submitting edits the existing
+        # row rather than letting somebody flood the instructor's queue.
+        unique_together = ('session', 'student')
+        ordering = ['-submitted_at']
+
+    @property
+    def is_pending(self):
+        return self.status == 'pending'
+
+    def __str__(self):
+        return f"{self.student} excuse for {self.session.title} [{self.status}]"
 
 

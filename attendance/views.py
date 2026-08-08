@@ -1,4 +1,7 @@
+import csv
 import random
+import re
+from django.http import HttpResponse
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,6 +12,7 @@ from .models import (
     User,
     AttendanceSession,
     AttendanceRecord,
+    AttendanceExcuse,
     StudentProfile,
     SystemSettings,
     ClassGroup,
@@ -19,6 +23,7 @@ from .models import (
 from .serializers import (
     UserSerializer,
     AttendanceLogSerializer,
+    AttendanceExcuseSerializer,
     SessionSerializer,
     SystemSettingsSerializer,
     ClassGroupSerializer,
@@ -30,7 +35,7 @@ from rest_framework.permissions import AllowAny
 from geopy.distance import geodesic
 from rest_framework import viewsets
 from django.contrib.auth import get_user_model
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.core.cache import cache
 from django.db.models import Count, Max, Q
 from django.utils import timezone
@@ -44,8 +49,11 @@ from .fcm_utils import (
     send_password_reset_code,
     send_change_password_code,
     send_password_changed_alert,
+    send_excuse_submitted,
+    send_excuse_reviewed,
 )
 from .presence import dispatch_due_presence_checks
+from .session_alerts import dispatch_due_session_alerts
 from .password_policy import password_error
 from rest_framework.permissions import IsAuthenticated
 
@@ -910,8 +918,24 @@ class ProcessCheckInAPI(APIView):
                     "message": "You have already timed in for this activity.",
                 }, status=400)
 
-            # The selfie must be submitted inside the session's photo window.
+            # Attendance is scheduled, so nobody may time in early. Without
+            # this a student who saw the reminder could check in during the
+            # lead time and then leave before the activity actually began.
             now = timezone.now()
+            if now < session.date_time:
+                starts_in = int((session.date_time - now).total_seconds() // 60)
+                local_start = timezone.localtime(session.date_time).strftime('%I:%M %p')
+                return Response({
+                    "status": "failed",
+                    "message": (
+                        f"Attendance has not started yet. It opens at {local_start} "
+                        f"(in {starts_in} min)."
+                    ),
+                    "not_started": True,
+                    "starts_at": session.date_time.isoformat(),
+                }, status=400)
+
+            # The selfie must be submitted inside the session's photo window.
             if now > session.photo_deadline:
                 late_by = int((now - session.photo_deadline).total_seconds() // 60)
                 return Response({
@@ -1376,9 +1400,35 @@ class AttendanceSessionAPIView(APIView):
         if class_group_id:
             sessions = sessions.filter(class_group_id=class_group_id)
 
-        session = sessions.first()
+        # Attendance is a per-day affair: the roster resets at local midnight
+        # and the instructor opens a fresh activity each morning. Without a
+        # bound here the newest row wins forever, so a student opening the app
+        # the next day would be handed yesterday's finished activity and sent
+        # into the check-in flow for it.
+        #
+        # The exception is an activity that began before midnight and is still
+        # inside its window - cutting that one off at 12am would strand the
+        # class halfway through, unable to time out.
+        now = timezone.now()
+        day_start = timezone.make_aware(
+            datetime.datetime.combine(timezone.localdate(), datetime.time.min),
+            timezone.get_current_timezone(),
+        )
+
+        session = None
+        for candidate in sessions.filter(
+            date_time__gte=day_start - datetime.timedelta(days=1)
+        ):
+            if candidate.date_time >= day_start or now < candidate.ends_at:
+                session = candidate
+                break
+
         if not session:
-            return Response({"message": "No active attendance session found"}, status=404)
+            return Response(
+                {"message": "No attendance session for today yet. "
+                            "Ask your instructor to start one."},
+                status=404,
+            )
 
         serializer = SessionSerializer(session)
         return Response(serializer.data)
@@ -1403,8 +1453,20 @@ class AttendanceSessionAPIView(APIView):
 
         serializer = SessionSerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=201)
+            session = serializer.save()
+
+            # Fire straight away rather than waiting for the next sweep. A
+            # session created to start immediately - or already inside its
+            # reminder lead - would otherwise sit silent until some unrelated
+            # request happened to arrive, and the class would hear nothing.
+            try:
+                dispatch_due_session_alerts(force=True)
+            except Exception as e:
+                # A push failure must never lose the session just saved.
+                print(f"Session alert dispatch after create failed: {e}")
+
+            session.refresh_from_db()
+            return Response(SessionSerializer(session).data, status=201)
         return Response(serializer.errors, status=400)
 
 
@@ -2216,5 +2278,586 @@ class StudentAttendanceHistoryAPIView(APIView):
             'absent': absent,
             'attendance_rate': round((verified / total) * 100, 1) if total else 0.0,
         }
+
+
+# ====================================================================================
+# CLASS ATTENDANCE RECORD (per class, per calendar date) + CSV EXPORT
+# ====================================================================================
+
+# Column order for the exported CSV. Kept in one place so the header row and
+# the data rows can never drift apart.
+CSV_COLUMNS = [
+    ('student_id', 'Student ID'),
+    ('student_name', 'Student Name'),
+    ('course_and_section', 'Course & Section'),
+    ('activity', 'Activity'),
+    ('activity_time', 'Activity Time'),
+    ('status', 'Status'),
+    ('excused', 'Excused'),
+    ('time_in', 'Time In'),
+    ('time_out', 'Time Out'),
+    ('presence_status', 'Presence Verification'),
+    ('responded_checks', 'Checks Answered'),
+    ('missed_checks', 'Checks Missed'),
+    ('selfie_verified', 'Selfie Verified'),
+    ('remarks', 'Remarks'),
+]
+
+PRESENCE_LABELS = {
+    'ok': 'Verified',
+    'warned': 'Warned',
+    'failed': 'Failed',
+}
+
+
+class ClassAttendanceDatesAPIView(APIView):
+    """
+    Which calendar dates this class actually held activities on.
+
+    The app's calendar marks these dates so the instructor taps a day that has
+    data instead of hunting through empty ones.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            class_group = ClassGroup.objects.get(pk=pk)
+        except ClassGroup.DoesNotExist:
+            return Response({'error': 'Class not found'}, status=404)
+
+        sessions = AttendanceSession.objects.filter(
+            class_group=class_group
+        ).order_by('-date_time')
+
+        # Group by local calendar date - a 10pm UTC session belongs to the day
+        # the instructor actually ran it, not the UTC day.
+        dates = {}
+        for session in sessions:
+            local_dt = timezone.localtime(session.date_time)
+            key = local_dt.strftime('%Y-%m-%d')
+            entry = dates.setdefault(key, {'date': key, 'sessions': 0, 'titles': []})
+            entry['sessions'] += 1
+            entry['titles'].append(session.title)
+
+        return Response({
+            'class_id': class_group.id,
+            'class_name': class_group.name,
+            'dates': list(dates.values()),
+        })
+
+
+class ClassAttendanceRecordsAPIView(APIView):
+    """
+    Full attendance record for one class, optionally narrowed to one date.
+
+    Add `?export=csv` to get the same rows as a downloadable file. The CSV is
+    built from the identical row list the JSON response uses, so what the
+    instructor sees on screen is exactly what they export.
+
+    The parameter is `export` rather than the more obvious `format` because DRF
+    reserves `format` for content negotiation and answers 404 for a suffix it
+    has no renderer for.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            class_group = ClassGroup.objects.select_related('instructor').get(pk=pk)
+        except ClassGroup.DoesNotExist:
+            return Response({'error': 'Class not found'}, status=404)
+
+        sessions = AttendanceSession.objects.filter(class_group=class_group)
+
+        date_param = request.query_params.get('date')
+        if date_param:
+            try:
+                target = datetime.datetime.strptime(date_param, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'error': 'date must look like YYYY-MM-DD'}, status=400
+                )
+            # Filter on an explicit local-midnight-to-midnight range instead of
+            # __date. A __date lookup makes MySQL call CONVERT_TZ(), which
+            # returns NULL - and therefore matches nothing at all - unless the
+            # server's timezone tables have been loaded.
+            start, end = self._local_day_bounds(target)
+            sessions = sessions.filter(date_time__gte=start, date_time__lt=end)
+
+        session_param = request.query_params.get('session_id')
+        if session_param:
+            sessions = sessions.filter(id=session_param)
+
+        sessions = sessions.order_by('date_time')
+
+        # Everyone currently on the roster; absences only make sense against it.
+        enrollments = ClassEnrollment.objects.filter(
+            class_group=class_group, status='active'
+        ).select_related('student__user')
+
+        records = AttendanceRecord.objects.filter(
+            session__in=sessions
+        ).select_related('student__user').prefetch_related('presence_checks')
+
+        by_session_student = {
+            (record.session_id, record.student_id): record for record in records
+        }
+
+        # Approved excuses turn what would read as an absence into 'Excused'.
+        # A letter still awaiting review changes nothing about the record.
+        excused = set(
+            AttendanceExcuse.objects.filter(
+                session__in=sessions, status='approved'
+            ).values_list('session_id', 'student_id')
+        )
+
+        rows = []
+        for session in sessions:
+            for enrollment in enrollments:
+                # Students who joined after the activity ran were never
+                # expected there, so they must not show up as absent.
+                if enrollment.joined_at and session.date_time < enrollment.joined_at:
+                    continue
+
+                record = by_session_student.get((session.id, enrollment.student_id))
+                is_excused = (session.id, enrollment.student_id) in excused
+                rows.append(
+                    self._row(session, enrollment.student, record, is_excused)
+                )
+
+        payload = {
+            'class_id': class_group.id,
+            'class_name': class_group.name,
+            'component': class_group.component or '',
+            'section_code': class_group.section_code or '',
+            'instructor_name': (
+                class_group.instructor.get_full_name()
+                or class_group.instructor.username
+            ),
+            'date': date_param or '',
+            'summary': self._summary(rows),
+            'records': rows,
+        }
+
+        if request.query_params.get('export') == 'csv':
+            return self._csv_response(class_group, date_param, rows)
+
+        return Response(payload)
+
+    @staticmethod
+    def _local_day_bounds(target_date):
+        """The UTC instants that bracket [target_date] in the local timezone."""
+        tz = timezone.get_current_timezone()
+        start = timezone.make_aware(
+            datetime.datetime.combine(target_date, datetime.time.min), tz
+        )
+        return start, start + datetime.timedelta(days=1)
+
+    def _row(self, session, student, record, is_excused=False):
+        user = student.user
+        local_session = timezone.localtime(session.date_time)
+
+        row = {
+            'session_id': session.id,
+            'student_id': student.student_id or user.username,
+            'student_name': user.get_full_name() or user.username,
+            'course_and_section': student.course_and_section or '',
+            'activity': session.title,
+            'activity_date': local_session.strftime('%Y-%m-%d'),
+            'activity_time': local_session.strftime('%I:%M %p'),
+            'excused': is_excused,
+        }
+
+        if record is None:
+            row.update({
+                # An approved excuse is the difference between a no-show and a
+                # sanctioned absence, so the two must not read the same.
+                'status': 'Excused' if is_excused else 'Absent',
+                'attended': False,
+                'time_in': '',
+                'time_out': '',
+                'presence_status': '',
+                'responded_checks': 0,
+                'missed_checks': 0,
+                'total_checks': 0,
+                'selfie_verified': False,
+                'remarks': (
+                    'Absence excused by instructor.' if is_excused
+                    else 'No time-in recorded.'
+                ),
+            })
+            return row
+
+        checks = list(record.presence_checks.all())
+        responded = sum(1 for c in checks if c.status == 'responded')
+
+        if record.presence_status == 'failed':
+            remarks = (
+                f'Timed in but missed {record.missed_checks} presence check(s); '
+                'attendance not verified.'
+            )
+        elif record.presence_status == 'warned':
+            remarks = 'Missed one presence check.'
+        elif record.check_out_at is None:
+            remarks = 'Timed in but never timed out.'
+        else:
+            remarks = ''
+
+        # They turned up but missed a ping, and the instructor accepted the
+        # explanation. Note it beside the failure rather than erasing it.
+        if is_excused and record.presence_status in ('warned', 'failed'):
+            remarks = f'{remarks} Missed check(s) excused by instructor.'.strip()
+
+        row.update({
+            'status': record.status,
+            'attended': True,
+            'time_in': timezone.localtime(record.timestamp).strftime('%I:%M %p'),
+            'time_out': (
+                timezone.localtime(record.check_out_at).strftime('%I:%M %p')
+                if record.check_out_at else ''
+            ),
+            'presence_status': PRESENCE_LABELS.get(
+                record.presence_status, record.presence_status or ''
+            ),
+            'responded_checks': responded,
+            'missed_checks': record.missed_checks,
+            'total_checks': len(checks),
+            'selfie_verified': record.selfie_verified,
+            'remarks': remarks,
+        })
+        return row
+
+    def _summary(self, rows):
+        total = len(rows)
+        present = sum(1 for r in rows if r['attended'])
+        verified = sum(
+            1 for r in rows if r['attended'] and r['presence_status'] != 'Failed'
+        )
+        # An excused absence is not an attendance, but it is not held against
+        # the student either - so it leaves the absent tally and the
+        # denominator behind the rate.
+        excused = sum(1 for r in rows if not r['attended'] and r.get('excused'))
+        counted = total - excused
+        return {
+            'expected': total,
+            'present': present,
+            'absent': total - present - excused,
+            'excused': excused,
+            'verified': verified,
+            'failed': sum(1 for r in rows if r['presence_status'] == 'Failed'),
+            'attendance_rate': round((present / counted) * 100, 1) if counted else 0.0,
+        }
+
+    def _csv_response(self, class_group, date_param, rows):
+        """Streams the rows as a CSV attachment."""
+        response = HttpResponse(content_type='text/csv')
+
+        # Spaces and slashes in a class name would make an awkward filename.
+        safe_name = re.sub(r'[^A-Za-z0-9]+', '_', class_group.name).strip('_')
+        suffix = date_param or 'all-dates'
+        filename = f'attendance_{safe_name}_{suffix}.csv'
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        writer = csv.writer(response)
+        writer.writerow([label for _, label in CSV_COLUMNS])
+
+        for row in rows:
+            writer.writerow([self._cell(row, key) for key, _ in CSV_COLUMNS])
+
+        return response
+
+    @staticmethod
+    def _cell(row, key):
+        """One CSV cell. Booleans read better as Yes/No than True/False."""
+        value = row.get(key, '')
+        if isinstance(value, bool):
+            return 'Yes' if value else 'No'
+        return '' if value is None else value
+
+
+# ====================================================================================
+# EXCUSE LETTERS (student explains a missed ping or a no-show)
+# ====================================================================================
+
+class StudentExcuseAPIView(APIView):
+    """
+    GET  - the excuses this student has filed, newest first.
+    POST - file (or revise) an excuse for one activity.
+
+    The `kind` is decided here from the attendance data, never from the
+    request body: if a record exists the student timed in and is excusing a
+    missed presence check, otherwise they are excusing a no-show. Trusting the
+    client with that would let anyone relabel their own absence.
+    """
+
+    permission_classes = [AllowAny]
+    # JSON as well as multipart: the attachment is optional, and most letters
+    # are filed as plain text. Accepting only multipart would reject those
+    # with a 415 the student could do nothing about.
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+
+    def get(self, request):
+        student_id = request.query_params.get('student_id')
+        if not student_id:
+            return Response({'error': 'student_id is required'}, status=400)
+
+        try:
+            profile = StudentProfile.objects.get(user_id=student_id)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=404)
+
+        excuses = AttendanceExcuse.objects.filter(
+            student=profile
+        ).select_related('session__class_group', 'student__user', 'reviewed_by')
+
+        session_id = request.query_params.get('session_id')
+        if session_id:
+            excuses = excuses.filter(session_id=session_id)
+
+        serializer = AttendanceExcuseSerializer(
+            excuses, many=True, context={'request': request}
+        )
+        return Response(serializer.data)
+
+    def post(self, request):
+        student_id = request.data.get('student_id')
+        session_id = request.data.get('session_id')
+        reason = str(request.data.get('reason') or '').strip()
+
+        if not student_id or not session_id or not reason:
+            return Response(
+                {'error': 'student_id, session_id, and reason are required.'},
+                status=400,
+            )
+
+        try:
+            profile = StudentProfile.objects.select_related('user').get(user_id=student_id)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=404)
+
+        try:
+            session = AttendanceSession.objects.select_related(
+                'class_group', 'instructor'
+            ).get(id=session_id)
+        except AttendanceSession.DoesNotExist:
+            return Response({'error': 'Activity not found'}, status=404)
+
+        # Only an approved member of the class may file against its activities.
+        if session.class_group_id:
+            is_member = ClassEnrollment.objects.filter(
+                class_group_id=session.class_group_id,
+                student=profile,
+                status='active',
+            ).exists()
+            if not is_member:
+                return Response(
+                    {'error': 'You are not an approved member of this class.'},
+                    status=403,
+                )
+
+        # Nothing to excuse before the activity has even started.
+        if timezone.now() < session.date_time:
+            return Response(
+                {'error': 'This activity has not started yet.'}, status=400
+            )
+
+        record = AttendanceRecord.objects.filter(
+            session=session, student=profile
+        ).first()
+
+        # Derive the kind from the data rather than trusting the client.
+        kind = 'missed_check' if record else 'absent'
+
+        # A clean attendance needs no excuse - reject rather than clutter the
+        # instructor's queue with letters that explain nothing.
+        if record and record.presence_status == 'ok' and record.check_out_at:
+            return Response(
+                {'error': 'Your attendance for this activity is already complete.'},
+                status=400,
+            )
+
+        existing = AttendanceExcuse.objects.filter(
+            session=session, student=profile
+        ).first()
+
+        # Once the instructor has ruled, the student cannot quietly re-file.
+        if existing and existing.status != 'pending':
+            return Response(
+                {
+                    'error': (
+                        f'Your excuse for this activity was already '
+                        f'{existing.status}. Please talk to your instructor.'
+                    ),
+                    'status': existing.status,
+                },
+                status=409,
+            )
+
+        attachment = request.FILES.get('attachment')
+
+        if existing:
+            # Still pending: treat a re-submission as an edit.
+            existing.reason = reason
+            existing.kind = kind
+            existing.record = record
+            if attachment:
+                existing.attachment = attachment
+            existing.save()
+            excuse = existing
+            created = False
+        else:
+            excuse = AttendanceExcuse.objects.create(
+                session=session,
+                student=profile,
+                record=record,
+                kind=kind,
+                reason=reason,
+                attachment=attachment,
+            )
+            created = True
+
+        try:
+            send_excuse_submitted(excuse)
+        except Exception as push_err:
+            # A dead token must not lose the student's letter.
+            print(f"⚠️ Excuse push to instructor failed: {push_err}")
+
+        serializer = AttendanceExcuseSerializer(excuse, context={'request': request})
+        return Response(
+            {
+                'message': (
+                    'Excuse submitted. Your instructor has been notified.'
+                    if created else 'Excuse updated. Your instructor has been notified.'
+                ),
+                'excuse': serializer.data,
+            },
+            status=201 if created else 200,
+        )
+
+
+class InstructorExcuseListAPIView(APIView):
+    """
+    The instructor's review queue: every excuse filed against their sessions.
+
+    Defaults to pending only, since that is the actionable list. Pass
+    `?status=all` (or approved/rejected) to see what has already been decided.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        instructor_id = request.query_params.get('instructor_id')
+        if not instructor_id:
+            return Response({'error': 'instructor_id is required'}, status=400)
+
+        excuses = AttendanceExcuse.objects.filter(
+            session__instructor_id=instructor_id
+        ).select_related('session__class_group', 'student__user', 'reviewed_by')
+
+        status_filter = (request.query_params.get('status') or 'pending').lower()
+        if status_filter != 'all':
+            excuses = excuses.filter(status=status_filter)
+
+        class_id = request.query_params.get('class_id')
+        if class_id:
+            excuses = excuses.filter(session__class_group_id=class_id)
+
+        serializer = AttendanceExcuseSerializer(
+            excuses, many=True, context={'request': request}
+        )
+        return Response({
+            'pending_count': AttendanceExcuse.objects.filter(
+                session__instructor_id=instructor_id, status='pending'
+            ).count(),
+            'excuses': serializer.data,
+        })
+
+
+class ReviewExcuseAPIView(APIView):
+    """
+    Instructor approves or rejects one excuse.
+
+    Approving an `absent` excuse is what turns that student's row from Absent
+    into Excused in the class record and CSV export. Approving a
+    `missed_check` excuse is recorded and shown, but deliberately does NOT
+    hand back the time-out window - presence verification stands on its own.
+    """
+
+    permission_classes = [AllowAny]
+
+    def patch(self, request, pk):
+        instructor_id = request.data.get('instructor_id')
+        decision = str(request.data.get('decision') or '').strip().lower()
+        note = str(request.data.get('response_note') or '').strip()
+
+        if not instructor_id:
+            return Response({'error': 'instructor_id is required'}, status=400)
+
+        if decision not in ('approve', 'reject'):
+            return Response(
+                {'error': "decision must be either 'approve' or 'reject'."},
+                status=400,
+            )
+
+        try:
+            excuse = AttendanceExcuse.objects.select_related(
+                'session', 'student__user', 'record'
+            ).get(pk=pk)
+        except AttendanceExcuse.DoesNotExist:
+            return Response({'error': 'Excuse not found'}, status=404)
+
+        # Only the instructor who owns the activity may rule on it.
+        if str(excuse.session.instructor_id) != str(instructor_id):
+            return Response(
+                {'error': 'Only the instructor who owns this activity can review it.'},
+                status=403,
+            )
+
+        if excuse.status != 'pending':
+            return Response(
+                {
+                    'error': f'This excuse was already {excuse.status}.',
+                    'status': excuse.status,
+                },
+                status=409,
+            )
+
+        try:
+            reviewer = User.objects.get(id=instructor_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'error': 'Instructor account not found.'}, status=404)
+
+        excuse.status = 'approved' if decision == 'approve' else 'rejected'
+        excuse.response_note = note or None
+        excuse.reviewed_by = reviewer
+        excuse.reviewed_at = timezone.now()
+        excuse.save(update_fields=[
+            'status', 'response_note', 'reviewed_by', 'reviewed_at'
+        ])
+
+        # An approved no-show stops counting as an absence. Where a record
+        # somehow exists we mark it Excused; where it does not (the usual case)
+        # the class-record view reads the approved excuse and labels the row,
+        # rather than inventing an attendance row with fake coordinates.
+        if (
+            excuse.status == 'approved'
+            and excuse.kind == 'absent'
+            and excuse.record is not None
+            and excuse.record.status == 'Absent'
+        ):
+            excuse.record.status = 'Excused'
+            excuse.record.save(update_fields=['status'])
+
+        try:
+            send_excuse_reviewed(excuse)
+        except Exception as push_err:
+            print(f"⚠️ Excuse decision push failed: {push_err}")
+
+        serializer = AttendanceExcuseSerializer(excuse, context={'request': request})
+        return Response({
+            'message': f'Excuse {excuse.status}. The student has been notified.',
+            'excuse': serializer.data,
+        })
 
 

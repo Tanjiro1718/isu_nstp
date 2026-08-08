@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
+import '../../widgets/excuse_dialog.dart';
 
 /// The student's own attendance record across every class they belong to.
 ///
@@ -15,7 +16,15 @@ import '../../models/user_model.dart';
 class AttendanceHistoryScreen extends StatefulWidget {
   final UserModel user;
 
-  const AttendanceHistoryScreen({super.key, required this.user});
+  /// True when the screen is shown as a tab inside a dashboard. The title and
+  /// back arrow are dropped, but the bar stays so Refresh is still reachable.
+  final bool embedded;
+
+  const AttendanceHistoryScreen({
+    super.key,
+    required this.user,
+    this.embedded = false,
+  });
 
   @override
   State<AttendanceHistoryScreen> createState() =>
@@ -35,6 +44,10 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
   List<Map<String, dynamic>> _records = const [];
   _HistoryFilter _filter = _HistoryFilter.all;
 
+  /// Letters this student has already filed, keyed by session id, so a row
+  /// offers "File an excuse" only when there is nothing pending on it yet.
+  Map<int, Map<String, dynamic>> _excusesBySession = const {};
+
   @override
   void initState() {
     super.initState();
@@ -46,6 +59,11 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
       _loading = true;
       _error = null;
     });
+
+    // Excuses live on their own endpoint. They are fetched alongside the
+    // history rather than blocking it: a hiccup there should cost the student
+    // the excuse badges, not their whole attendance record.
+    unawaited(_loadExcuses());
 
     try {
       final response = await http
@@ -98,6 +116,64 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
     }
   }
 
+  /// Pulls the letters this student has filed and indexes them by session.
+  ///
+  /// Deliberately silent on failure: the badges are a convenience, and losing
+  /// them is not worth replacing the attendance list with an error.
+  Future<void> _loadExcuses() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse(ApiConfig.myExcusesUrl(widget.user.id)),
+            headers: const {'ngrok-skip-browser-warning': 'true'},
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (!mounted || response.statusCode != 200) return;
+
+      final decoded = json.decode(response.body);
+      // Tolerate both a bare list and a wrapped object.
+      final List rows = decoded is List
+          ? decoded
+          : (decoded is Map
+              ? ((decoded['excuses'] ?? decoded['results']) as List? ?? const [])
+              : const []);
+
+      final indexed = <int, Map<String, dynamic>>{};
+      for (final row in rows) {
+        if (row is! Map) continue;
+        final excuse = row.cast<String, dynamic>();
+        final raw = excuse['session'] ?? excuse['session_id'];
+        final sessionId = raw is int ? raw : int.tryParse('$raw');
+        if (sessionId != null) indexed[sessionId] = excuse;
+      }
+
+      if (!mounted) return;
+      setState(() => _excusesBySession = indexed);
+    } catch (_) {
+      // Badges simply stay hidden.
+    }
+  }
+
+  /// Opens the excuse form, then refreshes the badges if a letter was filed.
+  Future<void> _fileExcuse(Map<String, dynamic> record) async {
+    final submitted = await showSubmitExcuseDialog(
+      context: context,
+      user: widget.user,
+      record: record,
+    );
+
+    if (!submitted || !mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Excuse submitted. Your instructor will review it.'),
+        backgroundColor: isuGreen,
+      ),
+    );
+    await _loadExcuses();
+  }
+
   /// Rows matching the active chip.
   List<Map<String, dynamic>> get _visible {
     switch (_filter) {
@@ -123,7 +199,9 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
-        title: const Text('My Attendance Record'),
+        title: widget.embedded ? null : const Text('My Attendance Record'),
+        toolbarHeight: widget.embedded ? 48 : null,
+        automaticallyImplyLeading: !widget.embedded,
         backgroundColor: isuGreen,
         foregroundColor: Colors.white,
         actions: [
@@ -450,10 +528,63 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
                 ),
               ),
             ],
+
+            ..._buildExcuseSection(record, attended, failed),
           ],
         ),
       ),
     );
+  }
+
+  /// The excuse controls for one row: the standing of a letter already filed,
+  /// or the offer to file one.
+  ///
+  /// Only misses are contestable - a verified attendance has nothing to
+  /// excuse, and offering the button there would just invite confusion.
+  List<Widget> _buildExcuseSection(
+    Map<String, dynamic> record,
+    bool attended,
+    bool failed,
+  ) {
+    if (attended && !failed) return const [];
+
+    final raw = record['session_id'];
+    final sessionId = raw is int ? raw : int.tryParse('$raw');
+    final excuse = sessionId == null ? null : _excusesBySession[sessionId];
+
+    if (excuse != null) {
+      final responseNote = excuse['response_note']?.toString();
+      return [
+        const Divider(height: 20),
+        ExcuseStatusChip(status: excuse['status']?.toString() ?? 'pending'),
+        if (responseNote != null && responseNote.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Instructor: $responseNote',
+            style: const TextStyle(fontSize: 11, color: Colors.black87),
+          ),
+        ],
+      ];
+    }
+
+    return [
+      const Divider(height: 16),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () => _fileExcuse(record),
+          icon: const Icon(Icons.drafts_outlined, size: 16),
+          label: const Text('File an excuse',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          style: TextButton.styleFrom(
+            foregroundColor: isuGreen,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+      ),
+    ];
   }
 
   Widget _timeChip(IconData icon, String label, String value) {

@@ -102,6 +102,61 @@ class ApiConfig {
   /// Session-by-session breakdown for one class.
   static String directorClassSessionsUrl(int classId) =>
       '$baseUrl/api/director/classes/$classId/sessions/';
+
+  // ---------------------------------------------------------------
+  // Class attendance record (instructor: per class, per calendar date)
+  // ---------------------------------------------------------------
+
+  /// Which calendar dates this class actually held activities on.
+  static String classAttendanceDatesUrl(int classId) =>
+      '$baseUrl/api/classes/$classId/attendance-dates/';
+
+  /// Attendance rows for a class. Pass [date] as YYYY-MM-DD to narrow it to
+  /// one day, and [asCsv] to get the same rows back as a downloadable file.
+  ///
+  /// The CSV flag is `export`, not `format`: DRF reserves `format` for content
+  /// negotiation and would 404 before the view ever runs.
+  static String classAttendanceRecordsUrl(
+    int classId, {
+    String? date,
+    bool asCsv = false,
+  }) {
+    final params = <String>[];
+    if (date != null && date.isNotEmpty) params.add('date=$date');
+    if (asCsv) params.add('export=csv');
+    final query = params.isEmpty ? '' : '?${params.join('&')}';
+    return '$baseUrl/api/classes/$classId/attendance-records/$query';
+  }
+
+  // ---------------------------------------------------------------
+  // Excuse letters
+  // ---------------------------------------------------------------
+
+  /// Student files an excuse (POST) or lists the ones they have filed (GET).
+  static String get excusesUrl => '$baseUrl/api/excuses/';
+
+  /// The excuses this student has already filed, so the app can show the
+  /// status of a letter instead of offering to submit a duplicate.
+  static String myExcusesUrl(int studentUserId, {int? sessionId}) {
+    final sessionFilter = sessionId != null ? '&session_id=$sessionId' : '';
+    return '$baseUrl/api/excuses/?student_id=$studentUserId$sessionFilter';
+  }
+
+  /// The instructor's review queue. Defaults to pending; pass `all`,
+  /// `approved`, or `rejected` for [status].
+  static String excuseReviewQueueUrl(
+    int instructorId, {
+    String status = 'pending',
+    int? classId,
+  }) {
+    final classFilter = classId != null ? '&class_id=$classId' : '';
+    return '$baseUrl/api/excuses/review-queue/'
+        '?instructor_id=$instructorId&status=$status$classFilter';
+  }
+
+  /// Instructor approves or rejects one excuse.
+  static String reviewExcuseUrl(int excuseId) =>
+      '$baseUrl/api/excuses/$excuseId/review/';
 }
 
 

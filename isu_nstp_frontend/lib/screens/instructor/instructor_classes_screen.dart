@@ -7,7 +7,15 @@ import 'class_detail_screen.dart';
 /// "My Classes" — lists every class the instructor owns and lets them make more.
 class InstructorClassesScreen extends StatefulWidget {
   final UserModel user;
-  const InstructorClassesScreen({super.key, required this.user});
+  /// True when the screen is shown as a tab inside a dashboard. It then drops
+  /// its own AppBar so the parent's bar is the only one on screen.
+  final bool embedded;
+
+  const InstructorClassesScreen({
+    super.key,
+    required this.user,
+    this.embedded = false,
+  });
 
   @override
   State<InstructorClassesScreen> createState() =>
@@ -60,12 +68,14 @@ class _InstructorClassesScreenState extends State<InstructorClassesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
-      appBar: AppBar(
-        title: const Text('My Classes'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
-        elevation: 2,
-      ),
+      appBar: widget.embedded
+          ? null
+          : AppBar(
+              title: const Text('My Classes'),
+              backgroundColor: Colors.blueAccent,
+              foregroundColor: Colors.white,
+              elevation: 2,
+            ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _openCreateSheet,
         backgroundColor: Colors.blueAccent,

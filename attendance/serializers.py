@@ -4,6 +4,7 @@ from .models import (
     User,
     AttendanceSession,
     AttendanceRecord,
+    AttendanceExcuse,
     StudentProfile,
     SystemSettings,
     ClassGroup,
@@ -55,7 +56,13 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False, allow_blank=True)
-    role = serializers.SerializerMethodField()
+    # Writable: the admin's "Add New User" screen posts this, and an instructor
+    # or director account is useless if the role is silently dropped and the
+    # model default ('student') wins. Display still goes through _display_role
+    # so legacy rows with a blank role keep resolving sensibly.
+    role = serializers.ChoiceField(
+        choices=User.ROLE_CHOICES, required=False
+    )
     id_picture_front = serializers.SerializerMethodField()
     student_id = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
     course_and_section = serializers.CharField(required=False, write_only=True, allow_blank=True, allow_null=True)
@@ -77,6 +84,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
+        rep['role'] = self._display_role(instance)
         profile = self._get_student_profile(instance)
 
         # Expose every field captured at registration so the app can show a
@@ -102,8 +110,14 @@ class UserSerializer(serializers.ModelSerializer):
             getattr(obj, 'profile', None)
         )
 
-    def get_role(self, obj):
-        if hasattr(obj, 'role') and obj.role:
+    def _display_role(self, obj):
+        """
+        Role the app should route on.
+
+        Falls back to 'admin' for superusers created before the role field was
+        populated, so they don't get dropped onto the student dashboard.
+        """
+        if getattr(obj, 'role', None):
             return str(obj.role).lower()
         if getattr(obj, 'is_superuser', False) or getattr(obj, 'is_staff', False):
             return 'admin'
@@ -196,7 +210,28 @@ class SessionSerializer(serializers.ModelSerializer):
         # Every activity is a fixed 4 hours. The instructor's form doesn't ask
         # for it, and marking it read-only means a hand-crafted request can't
         # stretch the window either - the presence schedule depends on it.
-        read_only_fields = ['duration_minutes']
+        #
+        # The two alert stamps are the server's own bookkeeping: they are what
+        # stops a reminder going out twice. A client that could set them would
+        # be able to silence an activity's notifications before they ever fire.
+        read_only_fields = [
+            'duration_minutes',
+            'reminder_sent_at',
+            'start_notified_at',
+        ]
+
+    def validate_reminder_minutes(self, value):
+        """
+        Keep the lead time sane: 0 means 'no advance warning', and anything
+        beyond a day is almost certainly a typo (e.g. minutes typed as hours).
+        """
+        if value < 0:
+            raise serializers.ValidationError("Reminder minutes cannot be negative.")
+        if value > 1440:
+            raise serializers.ValidationError(
+                "Reminder cannot be more than 24 hours (1440 minutes) ahead."
+            )
+        return value
 
     def get_class_name(self, obj):
         return obj.class_group.name if obj.class_group else None
@@ -353,4 +388,79 @@ class ClassGroupDetailSerializer(ClassGroupSerializer):
     def get_members(self, obj):
         enrollments = obj.enrollments.exclude(status='removed').select_related('student__user')
         return ClassMemberSerializer(enrollments, many=True).data
+
+
+class AttendanceExcuseSerializer(serializers.ModelSerializer):
+    """
+    One excuse letter, shaped for both the student's own list and the
+    instructor's review queue.
+
+    Everything the instructor decides (`status`, `response_note`, who reviewed
+    it and when) is read-only here - those are set by the review endpoint, so a
+    student cannot approve their own excuse by posting the field.
+    """
+
+    student_name = serializers.SerializerMethodField()
+    student_number = serializers.CharField(source='student.student_id', read_only=True)
+    session_title = serializers.CharField(source='session.title', read_only=True)
+    session_date = serializers.DateTimeField(
+        source='session.date_time', format='%m/%d/%Y', read_only=True
+    )
+    class_name = serializers.SerializerMethodField()
+    kind_label = serializers.CharField(source='get_kind_display', read_only=True)
+    attachment_url = serializers.SerializerMethodField()
+    submitted_at = serializers.DateTimeField(format='%m/%d/%Y %I:%M %p', read_only=True)
+    reviewed_at = serializers.DateTimeField(
+        format='%m/%d/%Y %I:%M %p', read_only=True
+    )
+    reviewed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AttendanceExcuse
+        fields = [
+            'id',
+            'session',
+            'session_title',
+            'session_date',
+            'class_name',
+            'student_name',
+            'student_number',
+            'kind',
+            'kind_label',
+            'reason',
+            'attachment_url',
+            'status',
+            'response_note',
+            'submitted_at',
+            'reviewed_at',
+            'reviewed_by_name',
+        ]
+        read_only_fields = [
+            'status',
+            'response_note',
+            'submitted_at',
+            'reviewed_at',
+            'reviewed_by_name',
+        ]
+
+    def get_student_name(self, obj):
+        user = obj.student.user
+        return user.get_full_name() or user.username
+
+    def get_class_name(self, obj):
+        group = obj.session.class_group
+        return group.name if group else None
+
+    def get_reviewed_by_name(self, obj):
+        if not obj.reviewed_by:
+            return None
+        return obj.reviewed_by.get_full_name() or obj.reviewed_by.username
+
+    def get_attachment_url(self, obj):
+        if not obj.attachment:
+            return None
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(obj.attachment.url)
+        return obj.attachment.url
 

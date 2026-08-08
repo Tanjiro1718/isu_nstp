@@ -8,6 +8,7 @@ import '../../services/class_service.dart';
 import '../../services/presence_service.dart';
 import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
+import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
 import '../profile_screen.dart';
 import 'attendance_history_screen.dart';
@@ -22,6 +23,16 @@ class StudentDashboard extends StatefulWidget {
 }
 
 class _StudentDashboardState extends State<StudentDashboard> {
+  int _currentIndex = 0;
+
+  /// Shown in the AppBar so the bar still says where you are.
+  static const _titles = [
+    'Student Dashboard',
+    'My Classes',
+    'My Attendance Record',
+    'Settings',
+  ];
+
   bool _isOpeningCheckIn = false;
   late UserModel _currentUser;
 
@@ -69,26 +80,48 @@ class _StudentDashboardState extends State<StudentDashboard> {
     });
   }
 
-  /// Turning the lock ON requires passing the check first - that proves the
-  /// student can actually get back in before we start hiding their data.
+  /// Both directions require passing the device check.
+  ///
+  /// Turning the lock ON proves the student can actually get back in before we
+  /// start hiding their data. Turning it OFF is guarded just as tightly: without
+  /// that check anyone holding the unlocked phone could flick the switch and
+  /// read the profile, which would make the lock purely decorative.
   Future<void> _toggleProfileLock(bool enable) async {
-    if (enable) {
-      final result = await ProfileLockService.authenticate(
-        reason: 'Verify your identity to turn on profile protection',
-      );
-      if (!mounted) return;
+    final result = await ProfileLockService.authenticate(
+      reason: enable
+          ? 'Verify your identity to turn on profile protection'
+          : 'Verify your identity to turn off profile protection',
+    );
+    if (!mounted) return;
 
+    if (result == LockResult.failed) {
+      _showSnackBar(
+        enable
+            ? 'Verification failed. Profile lock not enabled.'
+            : 'Verification failed. Profile protection stays on.',
+        Colors.red,
+      );
+      return;
+    }
+
+    if (result == LockResult.lockedOut) {
+      _showSnackBar(
+        'Too many attempts. Unlock your device the usual way, then try again.',
+        Colors.orange,
+      );
+      return;
+    }
+
+    // The device cannot prompt at all. Refuse to arm a lock the student would
+    // not be able to pass, but still let them disarm one: BiometricLockWidget
+    // already reveals the profile in this state, so blocking here would protect
+    // nothing and would strand the switch permanently on - exactly what happens
+    // to someone who enrols a fingerprint, turns the lock on, then removes it.
+    if (enable) {
       if (result == LockResult.notEnrolled) {
         _showSnackBar(
           'No screen lock is set up on this device. Add a face, fingerprint, '
           'or PIN in your device settings first.',
-          Colors.orange,
-        );
-        return;
-      }
-      if (result == LockResult.lockedOut) {
-        _showSnackBar(
-          'Too many attempts. Unlock your device the usual way, then try again.',
           Colors.orange,
         );
         return;
@@ -98,10 +131,6 @@ class _StudentDashboardState extends State<StudentDashboard> {
           'Could not open the verification prompt on this device.',
           Colors.red,
         );
-        return;
-      }
-      if (result == LockResult.failed) {
-        _showSnackBar('Verification failed. Profile lock not enabled.', Colors.red);
         return;
       }
     }
@@ -231,6 +260,20 @@ class _StudentDashboardState extends State<StudentDashboard> {
       }
 
       final data = json.decode(response.body);
+
+      // The newest session may be one the instructor scheduled for later. The
+      // server would refuse the time-in anyway, but only after the student had
+      // taken a selfie and waited on a location fix, so stop it here and say
+      // when to come back.
+      final startsAt = DateTime.tryParse('${data['date_time']}')?.toLocal();
+      if (startsAt != null && startsAt.isAfter(DateTime.now())) {
+        _showSnackBar(
+          'Attendance opens at ${_formatTimeOfDay(startsAt)}. '
+          "You'll be notified when it starts.",
+          Colors.orange,
+        );
+        return;
+      }
 
       // Work out when the photo window shuts so the screen can count down.
       DateTime? photoDeadline;
@@ -403,14 +446,22 @@ class _StudentDashboardState extends State<StudentDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: const Text("Student Dashboard"),
-        backgroundColor: isuGreen,
-        foregroundColor: Colors.white,
-        elevation: 2,
+        title: Text(
+          _titles[_currentIndex],
+          style: const TextStyle(
+            color: Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 20,
+          ),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 1,
+        iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
           IconButton(
-            icon: const Icon(Icons.person),
+            icon: const Icon(Icons.account_circle_outlined),
             tooltip: 'Profile Details',
             onPressed: _showProfileView,
           ),
@@ -421,76 +472,141 @@ class _StudentDashboardState extends State<StudentDashboard> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadMyClasses,
-        color: isuGreen,
-        child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: ListView(
-          children: [
-            Text(
-              "Welcome, ${_currentUser.username}!",
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              "Ready for class? Check in below.",
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            const SizedBox(height: 24),
-
-            // Presence verification takes priority over everything else.
-            if (_presence?.hasRecord == true) ...[
-              _buildPresenceSection(),
-              const SizedBox(height: 24),
-            ],
-
-            _buildMyClassesSection(),
-            const SizedBox(height: 24),
-            _buildDashboardCard(
-              context,
-              title: 'Check-In to Class',
-              subtitle: _isOpeningCheckIn
-                  ? 'Loading active session...'
-                  : 'Use GPS to mark your attendance',
-              icon: Icons.location_on,
-              iconColor: isuGreen,
-              onTap: _isOpeningCheckIn ? null : _openCurrentSessionCheckIn,
-            ),
-            const SizedBox(height: 16),
-            _buildDashboardCard(
-              context,
-              title: 'Join a Class',
-              subtitle: 'Enter a class code to join',
-              icon: Icons.group_add,
-              iconColor: Colors.blue,
-              onTap: () async {
-                await _showJoinClassDialog();
-              },
-            ),
-            const SizedBox(height: 16),
-            _buildDashboardCard(
-              context,
-              title: 'My Attendance Record',
-              subtitle: 'View your past check-ins and absences',
-              icon: Icons.history_edu,
-              iconColor: Colors.orange,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        AttendanceHistoryScreen(user: _currentUser),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            _buildProfileLockCard(),
-          ],
-        ),
-        ),
+      body: LazyTabView(
+        currentIndex: _currentIndex,
+        builders: [
+          (_) => _buildHomeTab(),
+          (_) => _buildClassesTab(),
+          (_) => AttendanceHistoryScreen(user: _currentUser, embedded: true),
+          (_) => _buildSettingsTab(),
+        ],
       ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) => setState(() => _currentIndex = index),
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: Colors.white,
+        selectedItemColor: Colors.black87,
+        unselectedItemColor: Colors.grey[500],
+        selectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+        unselectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 12,
+        ),
+        elevation: 8,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.location_on_outlined),
+            activeIcon: Icon(Icons.location_on),
+            label: 'Check-In',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.school_outlined),
+            activeIcon: Icon(Icons.school),
+            label: 'Classes',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.history_edu_outlined),
+            activeIcon: Icon(Icons.history_edu),
+            label: 'Records',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings_outlined),
+            activeIcon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Home: the greeting, the live presence banner, and the check-in action.
+  Widget _buildHomeTab() {
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _loadMyClasses();
+        await _refreshPresence();
+      },
+      color: isuGreen,
+      child: ListView(
+        padding: const EdgeInsets.all(20.0),
+        children: [
+          Text(
+            "Welcome, ${_currentUser.username}!",
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            "Ready for class? Check in below.",
+            style: TextStyle(fontSize: 16, color: Colors.grey),
+          ),
+          const SizedBox(height: 24),
+
+          // Presence verification takes priority over everything else.
+          if (_presence?.hasRecord == true) ...[
+            _buildPresenceSection(),
+            const SizedBox(height: 24),
+          ],
+
+          _buildDashboardCard(
+            context,
+            title: 'Check-In to Class',
+            subtitle: _isOpeningCheckIn
+                ? 'Loading active session...'
+                : 'Use GPS to mark your attendance',
+            icon: Icons.location_on,
+            iconColor: isuGreen,
+            onTap: _isOpeningCheckIn ? null : _openCurrentSessionCheckIn,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Classes: everything the student has joined, plus the join-by-code action.
+  Widget _buildClassesTab() {
+    return RefreshIndicator(
+      onRefresh: _loadMyClasses,
+      color: isuGreen,
+      child: ListView(
+        padding: const EdgeInsets.all(20.0),
+        children: [
+          _buildDashboardCard(
+            context,
+            title: 'Join a Class',
+            subtitle: 'Enter a class code to join',
+            icon: Icons.group_add,
+            iconColor: Colors.blue,
+            onTap: () async {
+              await _showJoinClassDialog();
+            },
+          ),
+          const SizedBox(height: 24),
+          _buildMyClassesSection(),
+        ],
+      ),
+    );
+  }
+
+  /// Settings: profile details and the device-lock switch.
+  Widget _buildSettingsTab() {
+    return ListView(
+      padding: const EdgeInsets.all(20.0),
+      children: [
+        _buildDashboardCard(
+          context,
+          title: 'Profile Details',
+          subtitle: 'View your name, ID number, course, and component',
+          icon: Icons.account_circle,
+          iconColor: isuGreen,
+          onTap: _showProfileView,
+        ),
+        const SizedBox(height: 16),
+        _buildProfileLockCard(),
+      ],
     );
   }
 
@@ -1066,15 +1182,25 @@ class _StudentDashboardState extends State<StudentDashboard> {
           // system prompt offers, and most phones withhold face unlock from
           // third-party apps, so promising "Face Unlock" here would be a lie.
           subtitle: Text(
-            _biometricAvailable
-                ? 'Require your device unlock (fingerprint, face, or PIN) '
-                    'before showing your profile details'
-                : 'Set up a screen lock on this device to use this',
+            !_biometricAvailable
+                ? 'Set up a screen lock on this device to use this'
+                : _profileLockEnabled
+                    ? 'Your profile details are protected. Verification is '
+                          'required to turn this off.'
+                    : 'Require your device unlock (fingerprint, face, or PIN) '
+                          'before showing your profile details',
             style: const TextStyle(fontSize: 13),
           ),
         ),
       ),
     );
+  }
+
+  /// "2:05 PM" - used when telling a student to come back later.
+  String _formatTimeOfDay(DateTime local) {
+    final hour12 = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour12:$minute ${local.hour < 12 ? 'AM' : 'PM'}';
   }
 
   /// Turns the ISO timestamp from the API into something readable.

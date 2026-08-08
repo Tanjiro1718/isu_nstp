@@ -48,6 +48,8 @@ dependencies:
   local_auth: ^2.3.0
   # Remembers the per-student "lock my profile" preference on-device.
   shared_preferences: ^2.3.2
+  # Write temp files (CSV export) before sharing via the native share sheet.
+  path_provider: ^2.1.6
 
 
 dev_dependencies:
@@ -60,6 +62,12 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: "^0.13.1"
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon/app_icon.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

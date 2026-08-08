@@ -10,7 +10,15 @@ import '../../services/class_service.dart';
 
 class InstructorSettingsScreen extends StatefulWidget {
   final UserModel user;
-  const InstructorSettingsScreen({super.key, required this.user});
+  /// True when the screen is shown as a tab inside a dashboard. It then drops
+  /// its own AppBar so the parent's bar is the only one on screen.
+  final bool embedded;
+
+  const InstructorSettingsScreen({
+    super.key,
+    required this.user,
+    this.embedded = false,
+  });
 
   @override
   State<InstructorSettingsScreen> createState() =>
@@ -29,6 +37,14 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
 
   LatLng? _pickedLocation;
   final MapController _mapController = MapController();
+
+  // When the activity actually begins. Null means "start now" - the common
+  // case - so the instructor never has to touch a date picker to run a
+  // session on the spot.
+  DateTime? _scheduledStart;
+
+  // How far ahead of the start the class gets the heads-up push.
+  int _reminderMinutes = 5;
 
   // The class this geofence session belongs to.
   List<ClassModel> _classes = [];
@@ -145,7 +161,11 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
       body: json.encode({
         'instructor': widget.user.id,
         'title': '${selectedClass.name} Attendance',
-        'date_time': DateTime.now().toUtc().toIso8601String(),
+        // Always sent in UTC; the server renders it back in local time.
+        'date_time': (_scheduledStart ?? DateTime.now())
+            .toUtc()
+            .toIso8601String(),
+        'reminder_minutes': _reminderMinutes,
         'target_latitude': double.parse(_latController.text),
         'target_longitude': double.parse(_lngController.text),
         'radius_meters': int.parse(_radiusController.text),
@@ -157,6 +177,120 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
     if (response.statusCode != 201) {
       throw Exception('Failed creating attendance session: ${response.body}');
     }
+  }
+
+  /// Human-readable summary of when the activity opens.
+  String get _startLabel {
+    if (_scheduledStart == null) return 'Starts immediately';
+
+    final d = _scheduledStart!;
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final hour12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final minute = d.minute.toString().padLeft(2, '0');
+    final period = d.hour < 12 ? 'AM' : 'PM';
+    return '${months[d.month - 1]} ${d.day}, ${d.year} at $hour12:$minute $period';
+  }
+
+  /// Date then time. Leaves the schedule untouched if either step is
+  /// cancelled, so a half-finished pick cannot set a nonsense start.
+  Future<void> _pickStartDateTime() async {
+    final now = DateTime.now();
+    final base = _scheduledStart ?? now.add(const Duration(minutes: 30));
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: base.isBefore(now) ? now : base,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(base),
+    );
+    if (time == null || !mounted) return;
+
+    final chosen = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+
+    // A start in the past would open check-in instantly and fire the reminder
+    // for a moment that has already gone by.
+    if (chosen.isBefore(now)) {
+      _showSnackBar('Pick a time in the future.', Colors.red);
+      return;
+    }
+
+    setState(() => _scheduledStart = chosen);
+  }
+
+  /// Start time + how early the class is warned.
+  Widget _buildScheduleSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "When Does It Start?",
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.blue,
+          ),
+        ),
+        const Text(
+          "Students are notified when the activity opens, and again the set "
+          "minutes beforehand. Nobody can time in before the start.",
+          style: TextStyle(fontSize: 13, color: Colors.grey),
+        ),
+        const SizedBox(height: 12),
+        InkWell(
+          onTap: _pickStartDateTime,
+          borderRadius: BorderRadius.circular(8),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: 'Start time',
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.schedule),
+              // Only offer "clear" once a schedule is actually set.
+              suffixIcon: _scheduledStart == null
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close),
+                      tooltip: 'Start immediately instead',
+                      onPressed: () => setState(() => _scheduledStart = null),
+                    ),
+            ),
+            child: Text(_startLabel),
+          ),
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<int>(
+          initialValue: _reminderMinutes,
+          decoration: const InputDecoration(
+            labelText: 'Remind students before start',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.notifications_active_outlined),
+          ),
+          items: const [
+            DropdownMenuItem(value: 0, child: Text('No advance reminder')),
+            DropdownMenuItem(value: 5, child: Text('5 minutes before')),
+            DropdownMenuItem(value: 10, child: Text('10 minutes before')),
+            DropdownMenuItem(value: 15, child: Text('15 minutes before')),
+            DropdownMenuItem(value: 30, child: Text('30 minutes before')),
+            DropdownMenuItem(value: 60, child: Text('1 hour before')),
+          ],
+          onChanged: (val) => setState(() => _reminderMinutes = val ?? 5),
+        ),
+      ],
+    );
   }
 
   /// Dropdown of the instructor's classes; the geofence is saved against it.
@@ -256,11 +390,13 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Class Location Setup"),
-        backgroundColor: Colors.blue.shade800, // Instructor Theme Color
-        foregroundColor: Colors.white,
-      ),
+      appBar: widget.embedded
+          ? null
+          : AppBar(
+              title: const Text("Class Location Setup"),
+              backgroundColor: Colors.blue.shade800, // Instructor Theme Color
+              foregroundColor: Colors.white,
+            ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -283,6 +419,9 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                     ),
                     const SizedBox(height: 12),
                     _buildClassPicker(),
+                    const SizedBox(height: 32),
+
+                    _buildScheduleSection(),
                     const SizedBox(height: 32),
 
                     const Text(

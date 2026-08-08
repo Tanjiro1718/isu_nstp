@@ -11,7 +11,16 @@ class DirectorOversightScreen extends StatefulWidget {
   /// 0 = By Class, 1 = By Instructor.
   final int initialTab;
 
-  const DirectorOversightScreen({super.key, this.initialTab = 0});
+  /// True when the screen is shown as a tab inside a dashboard. The title and
+  /// back arrow go away, but the bar itself stays so the By Class / By
+  /// Instructor TabBar and the refresh action remain reachable.
+  final bool embedded;
+
+  const DirectorOversightScreen({
+    super.key,
+    this.initialTab = 0,
+    this.embedded = false,
+  });
 
   @override
   State<DirectorOversightScreen> createState() =>
@@ -121,7 +130,9 @@ class _DirectorOversightScreenState extends State<DirectorOversightScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Attendance Oversight'),
+        title: widget.embedded ? null : const Text('Attendance Oversight'),
+        toolbarHeight: widget.embedded ? 48 : null,
+        automaticallyImplyLeading: !widget.embedded,
         backgroundColor: _accent,
         foregroundColor: Colors.white,
         actions: [

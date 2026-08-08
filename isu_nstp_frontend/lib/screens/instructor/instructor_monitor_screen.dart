@@ -14,7 +14,16 @@ class InstructorMonitorScreen extends StatefulWidget {
   /// still renders (read-only) if pushed without a signed-in instructor.
   final UserModel? instructor;
 
-  const InstructorMonitorScreen({super.key, this.instructor});
+  /// True when the screen is shown as a tab inside a dashboard. The title and
+  /// back arrow are dropped, but the actions stay as a slim toolbar - losing
+  /// them would make Export unreachable.
+  final bool embedded;
+
+  const InstructorMonitorScreen({
+    super.key,
+    this.instructor,
+    this.embedded = false,
+  });
 
   @override
   State<InstructorMonitorScreen> createState() => _InstructorMonitorScreenState();
@@ -54,10 +63,24 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
     super.dispose();
   }
 
-  /// The most recent session id present in the logs - that is the activity the
-  /// instructor is currently running.
+  /// Today, in the `MM/DD/YYYY` shape the log rows use.
+  String get _todayStamp {
+    final now = DateTime.now();
+    final month = now.month.toString().padLeft(2, '0');
+    final day = now.day.toString().padLeft(2, '0');
+    return '$month/$day/${now.year}';
+  }
+
+  /// The session the instructor is running *today*.
+  ///
+  /// Scoped to today on purpose: the headcount is a live view of who is
+  /// currently on site, so yesterday's roster must not still be sitting there
+  /// this morning. The logs themselves are never discarded - they stay in the
+  /// Attendance Record, which is where past days are meant to be read.
   int? get _activeSessionId {
+    final today = _todayStamp;
     for (final log in _logs) {
+      if (log['date']?.toString() != today) continue;
       final raw = log['session_id'];
       final id = raw is int ? raw : int.tryParse('$raw');
       if (id != null) return id;
@@ -67,7 +90,13 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
 
   Future<void> _refreshRoster() async {
     final sessionId = _activeSessionId;
-    if (sessionId == null) return;
+
+    // Nothing running today - drop the panel rather than leave a stale
+    // headcount from a previous day on screen.
+    if (sessionId == null) {
+      if (_roster != null && mounted) setState(() => _roster = null);
+      return;
+    }
 
     final roster = await HeadcountService.fetchRoster(sessionId);
     // Null means the request failed; keep the previous snapshot on screen.
@@ -129,7 +158,16 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
     });
 
     try {
-      final response = await http.get(Uri.parse(logsUrl));
+      // Scope to this instructor's own sessions. Unfiltered, the newest log of
+      // the day could belong to another instructor's activity - the roster
+      // would show their students and "Open time-out" would be refused.
+      final instructorId = widget.instructor?.id;
+      final uri = Uri.parse(logsUrl).replace(
+        queryParameters: instructorId == null
+            ? null
+            : {'instructor_id': '$instructorId'},
+      );
+      final response = await http.get(uri);
 
       if (response.statusCode == 200) {
         final List<dynamic> decoded = jsonDecode(response.body);
@@ -501,7 +539,9 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
   /// each student has answered, and the button that releases time-out.
   Widget _buildStandbyPanel() {
     final roster = _roster;
-    if (roster == null) return const SizedBox.shrink();
+    // No activity today. Say so explicitly - a panel that simply vanishes
+    // overnight looks like a fault rather than the daily reset it is.
+    if (roster == null) return _buildNoActivityToday();
 
     final canOpen = widget.instructor != null &&
         !roster.isCheckOutOpen &&
@@ -608,6 +648,44 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
     );
   }
 
+  /// Shown when no session has been run today.
+  Widget _buildNoActivityToday() {
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.shade300),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(Icons.event_available, color: Colors.grey.shade500),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'No activity running today',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'The live headcount starts fresh each day. Previous days '
+                    'are saved in the Attendance Record.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCountChip(String label, int value, MaterialColor color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -702,7 +780,11 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Real-time Headcount Counter'),
+        title: widget.embedded
+            ? null
+            : const Text('Real-time Headcount Counter'),
+        toolbarHeight: widget.embedded ? 48 : null,
+        automaticallyImplyLeading: !widget.embedded,
         backgroundColor: Colors.blueAccent,
         foregroundColor: Colors.white,
         actions: [

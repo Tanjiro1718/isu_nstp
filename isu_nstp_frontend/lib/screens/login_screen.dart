@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-import '../../models/user_model.dart';
+import '../models/user_model.dart';
 import '../config/api_config.dart';
 import '../services/device_token_service.dart';
 import '../services/session_service.dart';

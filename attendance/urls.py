@@ -34,6 +34,11 @@ from .views import (
     DirectorOverviewAPIView,
     DirectorClassSessionsAPIView,
     StudentAttendanceHistoryAPIView,
+    ClassAttendanceDatesAPIView,
+    ClassAttendanceRecordsAPIView,
+    StudentExcuseAPIView,
+    InstructorExcuseListAPIView,
+    ReviewExcuseAPIView,
 )
 
 
@@ -85,7 +90,16 @@ urlpatterns = [
     path('classes/join/', JoinClassByCodeAPIView.as_view(), name='class-join-by-code'),
     path('classes/join-link/', JoinClassByLinkAPIView.as_view(), name='class-join-by-link'),
     path('classes/invite/<str:token>/', InvitePreviewAPIView.as_view(), name='class-invite-preview'),
+    # Class attendance record: which days have data, then the rows for a day.
+    # Append ?format=csv to the second one to download it as a spreadsheet.
+    path('classes/<int:pk>/attendance-dates/', ClassAttendanceDatesAPIView.as_view(), name='class-attendance-dates'),
+    path('classes/<int:pk>/attendance-records/', ClassAttendanceRecordsAPIView.as_view(), name='class-attendance-records'),
     path('enrollments/<int:pk>/', ClassEnrollmentDetailAPIView.as_view(), name='enrollment-detail'),
+
+    # Excuse letters: student files one, instructor rules on it.
+    path('excuses/', StudentExcuseAPIView.as_view(), name='student-excuses'),
+    path('excuses/review-queue/', InstructorExcuseListAPIView.as_view(), name='instructor-excuses'),
+    path('excuses/<int:pk>/review/', ReviewExcuseAPIView.as_view(), name='review-excuse'),
     path('my-classes/', StudentClassListAPIView.as_view(), name='student-class-list'),
 
     # 6. Router endpoints (/users/)

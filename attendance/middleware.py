@@ -1,14 +1,16 @@
 """Hooks that piggyback on normal API traffic to do scheduled-ish work."""
 from .presence import dispatch_due_presence_checks
+from .session_alerts import dispatch_due_session_alerts
 
 
 class PresenceDispatchMiddleware:
     """
-    Runs the presence-check sweep on API requests.
+    Runs the scheduled sweeps on API requests.
 
     This is the substitute for a cron job: every time the app talks to the
-    server we take the opportunity to send any due pings and expire any ignored
-    ones. The sweep itself is throttled internally, so this stays cheap.
+    server we take the opportunity to send any due pings, expire any ignored
+    ones, and fire the reminder / start alerts for scheduled sessions. Both
+    sweeps are throttled internally, so this stays cheap.
     """
 
     def __init__(self, get_response):
@@ -23,5 +25,11 @@ class PresenceDispatchMiddleware:
                 dispatch_due_presence_checks()
             except Exception as e:
                 print(f"Presence sweep failed: {e}")
+
+            # Kept separate: a failure in one sweep must not stop the other.
+            try:
+                dispatch_due_session_alerts()
+            except Exception as e:
+                print(f"Session alert sweep failed: {e}")
 
         return response
