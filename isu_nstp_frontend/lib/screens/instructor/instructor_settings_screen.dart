@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../config/api_config.dart';
+import '../../config/campus_config.dart';
 import '../../models/class_model.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
@@ -87,16 +88,26 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
-          double lat = data['target_latitude'] ?? 16.9360;
-          double lng = data['target_longitude'] ?? 121.7730;
+          final double lat =
+              (data['target_latitude'] as num?)?.toDouble() ??
+                  CampusConfig.center.latitude;
+          final double lng =
+              (data['target_longitude'] as num?)?.toDouble() ??
+                  CampusConfig.center.longitude;
 
-          _latController.text = lat.toString();
-          _lngController.text = lng.toString();
+          // Settings saved before the campus restriction existed could point
+          // anywhere. Snapping back to the centre keeps the marker inside the
+          // map's own bounds - otherwise it would sit somewhere the camera is
+          // no longer allowed to travel to.
+          final location = CampusConfig.clampToCampus(LatLng(lat, lng));
+
+          _latController.text = location.latitude.toStringAsFixed(6);
+          _lngController.text = location.longitude.toStringAsFixed(6);
           _radiusController.text = data['allowed_radius_meters'].toString();
           _ayController.text = data['academic_year'];
           _selectedSemester = data['semester'] ?? '1st Semester';
 
-          _pickedLocation = LatLng(lat, lng);
+          _pickedLocation = location;
           _isLoading = false;
         });
       } else {
@@ -387,6 +398,45 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
     ).showSnackBar(SnackBar(content: Text(message), backgroundColor: color));
   }
 
+  /// Places the meeting point, refusing anything off campus.
+  ///
+  /// The camera constraint already stops the instructor panning away, but the
+  /// visible area is a rectangle around the bounds - at the corners a tap can
+  /// still land just outside. Checking the point itself is what actually
+  /// enforces the rule.
+  void _handleMapTap(TapPosition tapPosition, LatLng point) {
+    if (!CampusConfig.contains(point)) {
+      _showSnackBar(CampusConfig.outsideMessage, Colors.red);
+      return;
+    }
+
+    setState(() {
+      _pickedLocation = point;
+      _latController.text = point.latitude.toStringAsFixed(6);
+      _lngController.text = point.longitude.toStringAsFixed(6);
+    });
+  }
+
+  /// Validates a hand-typed coordinate.
+  ///
+  /// The lat/long fields are editable, so the map restriction alone is not
+  /// enough - a coordinate pasted straight into the box would otherwise sail
+  /// past every check the map performs.
+  String? _validateCoordinate(String? value, {required bool isLatitude}) {
+    if (value == null || value.trim().isEmpty) return 'Required';
+
+    final parsed = double.tryParse(value.trim());
+    if (parsed == null) return 'Enter a valid number';
+
+    final withinRange = isLatitude
+        ? parsed >= CampusConfig.southLatitude &&
+            parsed <= CampusConfig.northLatitude
+        : parsed >= CampusConfig.westLongitude &&
+            parsed <= CampusConfig.eastLongitude;
+
+    return withinRange ? null : 'Outside ISU Cauayan Campus';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -433,7 +483,8 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                       ),
                     ),
                     const Text(
-                      "Tap the map to set where students should check in today.",
+                      "Tap the map to set where students should check in today. "
+                      "The map is limited to ISU Cauayan Campus.",
                       style: TextStyle(fontSize: 13, color: Colors.grey),
                     ),
                     const SizedBox(height: 12),
@@ -453,17 +504,17 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                           mapController: _mapController,
                           options: MapOptions(
                             initialCenter:
-                                _pickedLocation ?? LatLng(16.9360, 121.7730),
-                            initialZoom: 14.0,
-                            onTap: (tapPosition, point) {
-                              setState(() {
-                                _pickedLocation = point;
-                                _latController.text = point.latitude
-                                    .toStringAsFixed(6);
-                                _lngController.text = point.longitude
-                                    .toStringAsFixed(6);
-                              });
-                            },
+                                _pickedLocation ?? CampusConfig.center,
+                            initialZoom: CampusConfig.initialZoom,
+                            // Pen the camera inside the campus so the
+                            // instructor cannot pan off to another town and
+                            // drop the geofence where no student will be.
+                            cameraConstraint: CameraConstraint.contain(
+                              bounds: CampusConfig.bounds,
+                            ),
+                            minZoom: CampusConfig.minZoom,
+                            maxZoom: CampusConfig.maxZoom,
+                            onTap: _handleMapTap,
                           ),
                           children: [
                             TileLayer(
@@ -471,6 +522,35 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                                   'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                               userAgentPackageName:
                                   'ph.edu.isu.nstp.attendanceapp',
+                            ),
+                            // Draw the boundary so the limit is visible rather
+                            // than just felt when the map refuses to pan.
+                            PolygonLayer(
+                              polygons: [
+                                Polygon(
+                                  points: [
+                                    const LatLng(
+                                      CampusConfig.southLatitude,
+                                      CampusConfig.westLongitude,
+                                    ),
+                                    const LatLng(
+                                      CampusConfig.southLatitude,
+                                      CampusConfig.eastLongitude,
+                                    ),
+                                    const LatLng(
+                                      CampusConfig.northLatitude,
+                                      CampusConfig.eastLongitude,
+                                    ),
+                                    const LatLng(
+                                      CampusConfig.northLatitude,
+                                      CampusConfig.westLongitude,
+                                    ),
+                                  ],
+                                  borderColor: Colors.blue.shade700,
+                                  borderStrokeWidth: 2,
+                                  color: Colors.blue.withValues(alpha: 0.05),
+                                ),
+                              ],
                             ),
                             if (_pickedLocation != null)
                               MarkerLayer(
@@ -503,7 +583,8 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                               labelText: 'Latitude',
                               border: OutlineInputBorder(),
                             ),
-                            validator: (v) => v!.isEmpty ? 'Required' : null,
+                            validator: (v) =>
+                                _validateCoordinate(v, isLatitude: true),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -515,7 +596,8 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                               labelText: 'Longitude',
                               border: OutlineInputBorder(),
                             ),
-                            validator: (v) => v!.isEmpty ? 'Required' : null,
+                            validator: (v) =>
+                                _validateCoordinate(v, isLatitude: false),
                           ),
                         ),
                       ],

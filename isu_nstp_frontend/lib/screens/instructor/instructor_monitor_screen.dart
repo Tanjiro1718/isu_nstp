@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
@@ -244,7 +246,24 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
     });
   }
 
+  /// Shares the visible logs as a real .csv attachment.
+  ///
+  /// This used to hand the CSV to Share.share() as plain text, which most apps
+  /// paste into a message body - so what arrived was a wall of commas rather
+  /// than a file anyone could open in Excel. Writing it to a temp file and
+  /// sharing that lets the receiving app see a real spreadsheet, matching the
+  /// Class Attendance Record export.
   Future<void> _exportLogs() async {
+    final logs = _filteredLogs;
+
+    // Sharing a header-only file looks like a broken export; say so instead.
+    if (logs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No attendance records to export.')),
+      );
+      return;
+    }
+
     final rows = <List<String>>[
       [
         'Student ID',
@@ -257,7 +276,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
         'Address',
         'Location',
       ],
-      ..._filteredLogs.map((log) {
+      ...logs.map((log) {
         final lat = log['student_latitude']?.toString() ?? '--';
         final lng = log['student_longitude']?.toString() ?? '--';
         return [
@@ -274,12 +293,56 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
       }),
     ];
 
-    final csv = rows.map((row) => row.map(_escapeCsv).join(',')).join('\n');
-    await Share.share(csv, subject: 'NSTP Attendance Logs');
+    final csv = rows.map((row) => row.map(_escapeCsv).join(',')).join('\r\n');
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/${_exportFilename()}');
+      // Excel only honours UTF-8 in a CSV when the BOM is present; without it
+      // any non-ASCII character in a name or address is mangled on open.
+      await file.writeAsString('\uFEFF$csv');
+
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: 'NSTP Attendance Logs',
+        text: 'NSTP attendance logs (${logs.length} record(s)).',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Export failed: $e')),
+      );
+    }
+  }
+
+  /// Names the file after the filter that produced it, so an instructor who
+  /// exports several ranges can tell the attachments apart.
+  String _exportFilename() {
+    String stamp(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+
+    final String suffix;
+    if (_dateFrom != null && _dateTo != null) {
+      suffix = '${stamp(_dateFrom!)}_to_${stamp(_dateTo!)}';
+    } else if (_dateFrom != null) {
+      suffix = 'from_${stamp(_dateFrom!)}';
+    } else if (_dateTo != null) {
+      suffix = 'until_${stamp(_dateTo!)}';
+    } else {
+      suffix = 'all-dates';
+    }
+
+    return 'nstp_attendance_logs_$suffix.csv';
   }
 
   String _escapeCsv(String value) {
-    final needsQuotes = value.contains(',') || value.contains('"') || value.contains('\n');
+    // \r matters as well as \n now that rows are separated by CRLF - a stray
+    // carriage return in an address would otherwise split the row on open.
+    final needsQuotes = value.contains(',') ||
+        value.contains('"') ||
+        value.contains('\n') ||
+        value.contains('\r');
     final escaped = value.replaceAll('"', '""');
     return needsQuotes ? '"$escaped"' : escaped;
   }
@@ -794,8 +857,8 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
             onPressed: _fetchLogs,
           ),
           IconButton(
-            icon: const Icon(Icons.download),
-            tooltip: 'Export logs',
+            icon: const Icon(Icons.share),
+            tooltip: 'Export logs as CSV',
             onPressed: _exportLogs,
           ),
         ],
