@@ -107,7 +107,7 @@ class _InstructorClassesScreenState extends State<InstructorClassesScreen> {
             return ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
               itemCount: classes.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
               itemBuilder: (context, index) =>
                   _ClassCard(classGroup: classes[index], onChanged: _refresh),
             );
