@@ -50,6 +50,9 @@ dependencies:
   shared_preferences: ^2.3.2
   # Write temp files (CSV export) before sharing via the native share sheet.
   path_provider: ^2.1.6
+  # On-device MediaPipe face detection + face embeddings (MobileFaceNet) for
+  # verifying the student's selfie at time-in. Pure Dart, runs offline.
+  face_detection_tflite: ^6.7.0
 
 
 dev_dependencies:

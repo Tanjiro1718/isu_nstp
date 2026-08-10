@@ -261,4 +261,25 @@ class ClassService {
     final List<dynamic> data = jsonDecode(response.body);
     return data.cast<Map<String, dynamic>>();
   }
+
+  /// Leaves the student's current class, freeing them to join another one.
+  static Future<String> leaveClass({
+    required int studentUserId,
+    required int classId,
+  }) async {
+    final response = await http.post(
+      Uri.parse(ApiConfig.myClassesLeaveUrl),
+      headers: _headers,
+      body: jsonEncode({
+        'student_id': studentUserId,
+        'class_id': classId,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw ClassApiException(_errorFrom(response, 'Could not leave the class.'));
+    }
+
+    return jsonDecode(response.body)['message']?.toString() ?? 'Left the class.';
+  }
 }

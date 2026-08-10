@@ -195,6 +195,11 @@ class AttendanceRecord(models.Model):
     selfie_verified = models.BooleanField(default=False)
     selfie_image = models.ImageField(upload_to='attendance/selfies/', blank=True, null=True)
 
+    # On-device face-match confidence (cosine similarity, -1..1) reported by the
+    # student app at time-in. Lets the instructor see how close a flagged
+    # check-in was, without trusting it as a hard gate.
+    face_similarity = models.FloatField(blank=True, null=True)
+
     # --- Random presence verification ---
     presence_status = models.CharField(
         max_length=10, choices=PRESENCE_STATUS_CHOICES, default='ok'

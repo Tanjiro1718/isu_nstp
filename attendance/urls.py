@@ -26,6 +26,7 @@ from .views import (
     ClassEnrollmentDetailAPIView,
     InvitePreviewAPIView,
     StudentClassListAPIView,
+    StudentLeaveClassAPIView,
     PresenceStatusAPIView,
     RespondPresenceCheckAPIView,
     CheckOutAPIView,
@@ -101,6 +102,7 @@ urlpatterns = [
     path('excuses/review-queue/', InstructorExcuseListAPIView.as_view(), name='instructor-excuses'),
     path('excuses/<int:pk>/review/', ReviewExcuseAPIView.as_view(), name='review-excuse'),
     path('my-classes/', StudentClassListAPIView.as_view(), name='student-class-list'),
+    path('my-classes/leave/', StudentLeaveClassAPIView.as_view(), name='student-class-leave'),
 
     # 6. Router endpoints (/users/)
     path('', include(router.urls)), 

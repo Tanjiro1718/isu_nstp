@@ -7,6 +7,7 @@ import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
 import '../../config/api_config.dart';
 import '../../models/user_model.dart'; // Import your user model!
+import '../../services/face_verification_service.dart';
 import '../../widgets/location_guidance_card.dart';
 
 class StudentCheckInScreen extends StatefulWidget {
@@ -230,7 +231,17 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
       // Step 1: Snap verification selfie
       final XFile image = await _cameraController!.takePicture();
 
-      // Step 2: Prepare multipart payload data package for Django API
+      // Step 2: Verify the face on-device (MediaPipe). Never blocks time-in:
+      // a mismatch, a missing reference, or even no face in frame still lets
+      // the student check in, but marks the record for instructor review.
+      setState(() => _statusMessage = "Verifying face...");
+      final faceCheck = await FaceVerificationService.instance.verifySelfie(
+        selfie: File(image.path),
+        studentUserId: widget.user.id,
+        referenceUrl: widget.user.idPictureUrl,
+      );
+
+      // Step 3: Prepare multipart payload data package for Django API
       var request = http.MultipartRequest(
         "POST",
         Uri.parse(ApiConfig.attendanceCheckInUrl),
@@ -242,6 +253,8 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
           .toString(); // Tell Django WHICH student is checking in
       request.fields['latitude'] = _currentPosition!.latitude.toString();
       request.fields['longitude'] = _currentPosition!.longitude.toString();
+      request.fields['face_verified'] = faceCheck.isVerified.toString();
+      request.fields['face_similarity'] = faceCheck.similarity.toStringAsFixed(6);
 
       // TODO: If Django's [IsAuthenticated] blocks this, we will need to pass your actual JWT token here later.
       // request.headers['Authorization'] = 'Bearer YOUR_ACTUAL_TOKEN';
@@ -256,7 +269,7 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
       final responseBody = await response.stream.bytesToString();
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        setState(() => _statusMessage = "Attendance Checked In Successfully!");
+        setState(() => _statusMessage = faceCheck.message);
         if (mounted) {
           // Surface the presence-check warning so it is not a surprise later.
           String note = '';
@@ -269,9 +282,11 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                note.isNotEmpty ? 'Time-in recorded. $note' : 'Time-in Recorded Successfully!',
+                note.isNotEmpty
+                    ? 'Time-in recorded. ${faceCheck.message} $note'
+                    : 'Time-in Recorded Successfully! ${faceCheck.message}',
               ),
-              backgroundColor: Colors.green,
+              backgroundColor: faceCheck.isVerified ? Colors.green : Colors.orange,
               duration: const Duration(seconds: 5),
             ),
           );
@@ -357,6 +372,8 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
     _countdownTimer?.cancel();
     _locationPoller?.cancel();
     _cameraController?.dispose();
+    // Free the ~25MB of face models from memory once the screen is gone.
+    FaceVerificationService.instance.dispose();
     super.dispose();
   }
 

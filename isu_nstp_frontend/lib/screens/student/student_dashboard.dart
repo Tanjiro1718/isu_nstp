@@ -41,6 +41,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
   bool _isLoadingClasses = true;
   String? _classesError;
 
+  /// Class ids currently being left, so each leave button can show a spinner.
+  final Set<int> _leavingClassIds = {};
+
   // --- Live presence verification state ---
   PresenceStatus? _presence;
   Timer? _presencePoller;
@@ -442,6 +445,74 @@ class _StudentDashboardState extends State<StudentDashboard> {
     );
   }
 
+  /// Leaves [classId] after confirmation, freeing the student to join another
+  /// class. On success the classes list and presence banner both refresh.
+  Future<void> _leaveClass(int? classId, String className) async {
+    if (classId == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.logout, color: Colors.red, size: 26),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Leave class?',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Leave "$className"? You will need a new class code to rejoin. '
+          'You can join another class right after.',
+          style: const TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                color: isuGreen,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            icon: const Icon(Icons.logout, size: 18),
+            label: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _leavingClassIds.add(classId));
+    try {
+      final message = await ClassService.leaveClass(
+        studentUserId: _currentUser.id,
+        classId: classId,
+      );
+      if (!mounted) return;
+      _showSnackBar(message, Colors.green);
+      await _loadMyClasses();
+      await _refreshPresence();
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar(e.toString(), Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() => _leavingClassIds.remove(classId));
+      }
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -459,18 +530,6 @@ class _StudentDashboardState extends State<StudentDashboard> {
         backgroundColor: Colors.white,
         elevation: 1,
         iconTheme: const IconThemeData(color: Colors.black87),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.account_circle_outlined),
-            tooltip: 'Profile Details',
-            onPressed: _showProfileView,
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () => LogoutHelper.confirmAndLogout(context),
-          ),
-        ],
       ),
       body: LazyTabView(
         currentIndex: _currentIndex,
@@ -567,7 +626,11 @@ class _StudentDashboardState extends State<StudentDashboard> {
   }
 
   /// Classes: everything the student has joined, plus the join-by-code action.
+  ///
+  /// A student may only belong to one class at a time, so the join card is
+  /// disabled while they are already enrolled somewhere.
   Widget _buildClassesTab() {
+    final alreadyInAClass = _myClasses.isNotEmpty;
     return RefreshIndicator(
       onRefresh: _loadMyClasses,
       color: isuGreen,
@@ -576,13 +639,13 @@ class _StudentDashboardState extends State<StudentDashboard> {
         children: [
           _buildDashboardCard(
             context,
-            title: 'Join a Class',
-            subtitle: 'Enter a class code to join',
+            title: alreadyInAClass ? 'Already in a class' : 'Join a Class',
+            subtitle: alreadyInAClass
+                ? 'You can only be in one class. Leave your current class first.'
+                : 'Enter a class code to join',
             icon: Icons.group_add,
-            iconColor: Colors.blue,
-            onTap: () async {
-              await _showJoinClassDialog();
-            },
+            iconColor: alreadyInAClass ? Colors.grey : Colors.blue,
+            onTap: alreadyInAClass ? null : _showJoinClassDialog,
           ),
           const SizedBox(height: 24),
           _buildMyClassesSection(),
@@ -606,6 +669,15 @@ class _StudentDashboardState extends State<StudentDashboard> {
         ),
         const SizedBox(height: 16),
         _buildProfileLockCard(),
+        const SizedBox(height: 16),
+        _buildDashboardCard(
+          context,
+          title: 'Log Out',
+          subtitle: 'Sign out of your account',
+          icon: Icons.logout,
+          iconColor: Colors.red,
+          onTap: () => LogoutHelper.confirmAndLogout(context),
+        ),
       ],
     );
   }
@@ -955,6 +1027,12 @@ class _StudentDashboardState extends State<StudentDashboard> {
       if (sectionCode.isNotEmpty) sectionCode,
     ].join(' - ');
 
+    // Pending students cannot check in yet, so the tile is inert for them.
+    final canOpenCheckIn = !isPending && !_isOpeningCheckIn;
+    final classId = classData['id'] is int
+        ? classData['id'] as int
+        : int.tryParse('${classData['id']}');
+
     return Card(
       elevation: 2,
       margin: const EdgeInsets.only(bottom: 12),
@@ -998,17 +1076,45 @@ class _StudentDashboardState extends State<StudentDashboard> {
               ),
           ],
         ),
-        trailing: isPending
-            ? null
-            : const Icon(Icons.login, color: isuGreen, size: 20),
-        // Pending students cannot check in yet, so the tile is inert for them.
-        onTap: isPending || _isOpeningCheckIn
-            ? null
-            : () => _openCurrentSessionCheckIn(
-                classId: classData['id'] is int
-                    ? classData['id'] as int
-                    : int.tryParse('${classData['id']}'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!isPending)
+              IconButton(
+                icon: Icon(
+                  Icons.login,
+                  color: canOpenCheckIn ? isuGreen : Colors.grey,
+                  size: 22,
+                ),
+                tooltip: 'Open check-in',
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints(minWidth: 40, minHeight: 40),
+                onPressed: canOpenCheckIn
+                    ? () => _openCurrentSessionCheckIn(classId: classId)
+                    : null,
               ),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: _leavingClassIds.contains(classId)
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.logout, color: Colors.red, size: 22),
+              tooltip: 'Leave Class',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              onPressed: _leavingClassIds.contains(classId)
+                  ? null
+                  : () => _leaveClass(classId, name),
+            ),
+          ],
+        ),
+        onTap: canOpenCheckIn
+            ? () => _openCurrentSessionCheckIn(classId: classId)
+            : null,
       ),
     );
   }

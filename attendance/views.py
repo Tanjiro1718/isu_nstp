@@ -955,6 +955,25 @@ class ProcessCheckInAPI(APIView):
             if distance <= session.radius_meters:
                 selfie_file = request.FILES.get('selfie')
                 mode = request.data.get('mode') or ('online' if selfie_file else 'offline')
+
+                # The app verifies the selfie's face on-device (MediaPipe) and
+                # reports the result. A mismatch, missing reference, or no face
+                # never blocks time-in: the record is saved but flagged for
+                # instructor review (selfie_verified=False).
+                face_verified_raw = request.data.get('face_verified')
+                if face_verified_raw is not None:
+                    # Accept "true"/"True"/1 forms from the app.
+                    face_verified = str(face_verified_raw).lower() in ('true', '1', 'yes')
+                else:
+                    # Older app builds: a selfie being attached counts as its
+                    # own (weak) verification, as it always has.
+                    face_verified = bool(selfie_file)
+
+                try:
+                    face_similarity = float(request.data.get('face_similarity'))
+                except (TypeError, ValueError):
+                    face_similarity = None
+
                 # Creates the record in your database
                 record = AttendanceRecord.objects.create(
                     session=session,
@@ -964,17 +983,19 @@ class ProcessCheckInAPI(APIView):
                     status='Present',
                     mode=mode,
                     student_address=request.data.get('address') or request.data.get('student_address'),
-                    selfie_verified=bool(selfie_file),
+                    selfie_verified=face_verified,
                     selfie_image=selfie_file,
+                    face_similarity=face_similarity,
                 )
 
                 # Queue the random "are you still there?" prompts for this student.
                 checks = record.schedule_presence_checks()
 
                 return Response({
-                    "status": "success", 
+                    "status": "success",
                     "message": f"Attendance recorded successfully! You are {distance:.1f}m away.",
                     "record_id": record.id,
+                    "face_verified": face_verified,
                     "presence_checks_scheduled": len(checks),
                     "presence_note": (
                         f"Stay on site. You will get {len(checks)} random presence "
@@ -1713,12 +1734,24 @@ class JoinClassByCodeAPIView(APIView):
             student=student_profile
         ).first()
 
-        if existing:
-            if existing.status == 'removed':
-                existing.status = 'pending' if class_group.requires_approval else 'active'
-                existing.save()
-                return Response({'message': 'Re-enrolled in class', 'status': existing.status})
+        if existing and existing.status != 'removed':
             return Response({'message': 'Already enrolled in this class', 'status': existing.status})
+
+        # A student may only belong to one class at a time. An active or
+        # pending enrollment anywhere else blocks joining this one.
+        if ClassEnrollment.objects.filter(
+            student=student_profile, status__in=['active', 'pending']
+        ).exists():
+            return Response(
+                {'error': 'You can only be enrolled in one class at a time. '
+                          'Leave your current class first.'},
+                status=403,
+            )
+
+        if existing and existing.status == 'removed':
+            existing.status = 'pending' if class_group.requires_approval else 'active'
+            existing.save()
+            return Response({'message': 'Re-enrolled in class', 'status': existing.status})
 
         # Create new enrollment
         enrollment_status = 'pending' if class_group.requires_approval else 'active'
@@ -1766,12 +1799,24 @@ class JoinClassByLinkAPIView(APIView):
             student=student_profile
         ).first()
 
-        if existing:
-            if existing.status == 'removed':
-                existing.status = 'pending' if class_group.requires_approval else 'active'
-                existing.save()
-                return Response({'message': 'Re-enrolled in class', 'status': existing.status})
+        if existing and existing.status != 'removed':
             return Response({'message': 'Already enrolled in this class', 'status': existing.status})
+
+        # Same one-class-per-student rule as the join-code path: no joining
+        # another class while still enrolled somewhere.
+        if ClassEnrollment.objects.filter(
+            student=student_profile, status__in=['active', 'pending']
+        ).exists():
+            return Response(
+                {'error': 'You can only be enrolled in one class at a time. '
+                          'Leave your current class first.'},
+                status=403,
+            )
+
+        if existing and existing.status == 'removed':
+            existing.status = 'pending' if class_group.requires_approval else 'active'
+            existing.save()
+            return Response({'message': 'Re-enrolled in class', 'status': existing.status})
 
         enrollment_status = 'pending' if class_group.requires_approval else 'active'
         ClassEnrollment.objects.create(
@@ -1899,6 +1944,42 @@ class StudentClassListAPIView(APIView):
             })
 
         return Response(classes_data)
+
+
+class StudentLeaveClassAPIView(APIView):
+    """A student leaves their current class so they can join another one.
+
+    Soft-deletes the enrollment (status 'removed'), which keeps the audit trail
+    while freeing the student to join a different class under the one-class
+    rule.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        student_id = request.data.get('student_id')  # User ID
+        class_id = request.data.get('class_id')
+
+        if not student_id or not class_id:
+            return Response({'error': 'student_id and class_id are required'}, status=400)
+
+        try:
+            student_user = User.objects.get(id=student_id)
+            student_profile = StudentProfile.objects.get(user=student_user)
+        except (User.DoesNotExist, StudentProfile.DoesNotExist):
+            return Response({'error': 'Student not found'}, status=404)
+
+        enrollment = ClassEnrollment.objects.filter(
+            class_group_id=class_id,
+            student=student_profile,
+            status__in=['active', 'pending'],
+        ).first()
+
+        if enrollment is None:
+            return Response({'error': 'You are not enrolled in that class.'}, status=404)
+
+        enrollment.status = 'removed'
+        enrollment.save(update_fields=['status'])
+        return Response({'message': 'You have left the class.', 'status': 'removed'})
 
 
 # ====================================================================================
@@ -2224,6 +2305,7 @@ class StudentAttendanceHistoryAPIView(APIView):
                 'responded_checks': 0,
                 'total_checks': 0,
                 'selfie_verified': False,
+                'face_similarity': None,
                 'note': 'No time-in recorded for this activity.',
             })
             return base
@@ -2256,6 +2338,7 @@ class StudentAttendanceHistoryAPIView(APIView):
             'responded_checks': responded,
             'total_checks': len(checks),
             'selfie_verified': record.selfie_verified,
+            'face_similarity': record.face_similarity,
             'note': note,
         })
         return base
@@ -2482,6 +2565,7 @@ class ClassAttendanceRecordsAPIView(APIView):
                 'missed_checks': 0,
                 'total_checks': 0,
                 'selfie_verified': False,
+                'face_similarity': None,
                 'remarks': (
                     'Absence excused by instructor.' if is_excused
                     else 'No time-in recorded.'
@@ -2524,6 +2608,7 @@ class ClassAttendanceRecordsAPIView(APIView):
             'missed_checks': record.missed_checks,
             'total_checks': len(checks),
             'selfie_verified': record.selfie_verified,
+            'face_similarity': record.face_similarity,
             'remarks': remarks,
         })
         return row

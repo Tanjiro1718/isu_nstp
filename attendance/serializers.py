@@ -278,6 +278,7 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
             'student_longitude',
             'address',
             'selfie_verified',
+            'face_similarity',
             'student_photo_url',
             'selfie_image_url',
             'presence_status',

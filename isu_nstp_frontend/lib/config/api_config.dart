@@ -81,6 +81,9 @@ class ApiConfig {
   /// Classes the signed-in student belongs to.
   static String get myClassesUrl => '$baseUrl/api/my-classes/';
 
+  /// Student leaves their current class so they can join another one.
+  static String get myClassesLeaveUrl => '$baseUrl/api/my-classes/leave/';
+
   /// Every session the student was expected at, attended or not.
   static String myAttendanceHistoryUrl(int studentUserId) =>
       '$baseUrl/api/attendance/my-history/?student_id=$studentUserId';
