@@ -511,7 +511,7 @@ class AttendanceExcuse(models.Model):
     kind = models.CharField(max_length=15, choices=KIND_CHOICES)
     reason = models.TextField()
     # Medical certificate, parent's letter, and so on.
-    attachment = models.ImageField(upload_to='attendance/excuses/', blank=True, null=True)
+    attachment = models.FileField(upload_to='attendance/excuses/', blank=True, null=True)
 
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     submitted_at = models.DateTimeField(auto_now_add=True)

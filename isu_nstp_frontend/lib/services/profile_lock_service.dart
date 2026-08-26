@@ -74,7 +74,7 @@ class ProfileLockService {
 
   static Future<bool> isLockEnabled(int userId) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_prefsKey(userId)) ?? false;
+    return prefs.getBool(_prefsKey(userId)) ?? true;
   }
 
   static Future<void> setLockEnabled(int userId, bool enabled) async {

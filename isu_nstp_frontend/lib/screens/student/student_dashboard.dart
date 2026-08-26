@@ -1239,6 +1239,14 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 ),
                 const Divider(height: 1),
                 _buildReadOnlyTile(
+                  icon: Icons.groups,
+                  label: 'Enrolled Class',
+                  value: _myClasses.isNotEmpty
+                      ? '${_myClasses.first['name'] ?? 'N/A'}'
+                      : 'Not enrolled in any class',
+                ),
+                const Divider(height: 1),
+                _buildReadOnlyTile(
                   icon: Icons.assignment_ind,
                   label: 'Role',
                   value: _currentUser.role.toUpperCase(),

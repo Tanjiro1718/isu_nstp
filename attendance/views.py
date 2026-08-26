@@ -2204,6 +2204,8 @@ class DirectorClassSessionsAPIView(APIView):
                 'attendance_rate': rate,
                 'health': _health_label(rate, students > 0),
                 'is_check_out_open': session.is_check_out_open,
+                'target_latitude': str(session.target_latitude),
+                'target_longitude': str(session.target_longitude),
             })
 
         instructor = class_group.instructor
@@ -2550,6 +2552,8 @@ class ClassAttendanceRecordsAPIView(APIView):
             'activity_date': local_session.strftime('%Y-%m-%d'),
             'activity_time': local_session.strftime('%I:%M %p'),
             'excused': is_excused,
+            'session_latitude': str(session.target_latitude),
+            'session_longitude': str(session.target_longitude),
         }
 
         if record is None:
@@ -2887,7 +2891,7 @@ class ReviewExcuseAPIView(APIView):
 
         try:
             excuse = AttendanceExcuse.objects.select_related(
-                'session', 'student__user', 'record'
+                'session__class_group', 'student__user', 'record', 'reviewed_by'
             ).get(pk=pk)
         except AttendanceExcuse.DoesNotExist:
             return Response({'error': 'Excuse not found'}, status=404)

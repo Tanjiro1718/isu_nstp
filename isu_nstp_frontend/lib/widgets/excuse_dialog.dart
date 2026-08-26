@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -71,14 +73,78 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
   /// gives them nothing to rule on.
   static const int _minReasonLength = 10;
 
+  static const List<String> _allowedExtensions = [
+    'jpg', 'jpeg', 'png', 'gif', 'bmp',
+    'pdf',
+    'doc', 'docx',
+  ];
+
   final TextEditingController _reasonController = TextEditingController();
   bool _submitting = false;
   String? _error;
+
+  File? _selectedFile;
+  String? _selectedFileName;
 
   @override
   void dispose() {
     _reasonController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: _allowedExtensions,
+      );
+
+      if (!mounted) return;
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        if (file.path == null) {
+          setState(() {
+            _error = 'Could not read the selected file.';
+          });
+          return;
+        }
+
+        // Warn if file is larger than 5 MB
+        if (file.size > 5 * 1024 * 1024) {
+          setState(() {
+            _error = 'File is too large. Maximum size is 5 MB.';
+          });
+          return;
+        }
+
+        setState(() {
+          _selectedFile = File(file.path!);
+          _selectedFileName = file.name;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not open file picker.';
+      });
+    }
+  }
+
+  void _removeFile() {
+    setState(() {
+      _selectedFile = null;
+      _selectedFileName = null;
+    });
+  }
+
+  IconData _fileIcon(String? name) {
+    if (name == null) return Icons.attach_file;
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf;
+    if (lower.endsWith('.doc') || lower.endsWith('.docx')) return Icons.description;
+    return Icons.image;
   }
 
   Future<void> _submit() async {
@@ -97,17 +163,28 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
     });
 
     try {
-      final response = await http
-          .post(
-            Uri.parse(ApiConfig.excusesUrl),
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'student_id': widget.user.id,
-              'session_id': widget.sessionId,
-              'reason': reason,
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
+      final uri = Uri.parse(ApiConfig.excusesUrl);
+      final request = http.MultipartRequest('POST', uri);
+
+      request.fields['student_id'] = '${widget.user.id}';
+      request.fields['session_id'] = '${widget.sessionId}';
+      request.fields['reason'] = reason;
+
+      if (_selectedFile != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'attachment',
+            _selectedFile!.path,
+            filename: _selectedFileName,
+          ),
+        );
+      }
+
+      final streamedResponse = await request.send().timeout(
+            const Duration(seconds: 30),
+          );
+
+      final response = await http.Response.fromStream(streamedResponse);
 
       if (!mounted) return;
 
@@ -204,6 +281,56 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
+            ),
+            const SizedBox(height: 10),
+            if (_selectedFile != null && _selectedFileName != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isuGreen.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: isuGreen.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(_fileIcon(_selectedFileName), size: 20, color: isuGreen),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _selectedFileName!,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (!_submitting)
+                      GestureDetector(
+                        onTap: _removeFile,
+                        child: Icon(Icons.close, size: 18, color: Colors.red.shade400),
+                      ),
+                  ],
+                ),
+              )
+            else
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _submitting ? null : _pickFile,
+                  icon: const Icon(Icons.attach_file, size: 18),
+                  label: const Text('Attach file (optional)'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: isuGreen,
+                    side: BorderSide(color: isuGreen.withOpacity(0.4)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 2),
+            Text(
+              'Accepted: JPG, PNG, PDF, DOC (max 5 MB)',
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
             ),
             if (_error != null) ...[
               const SizedBox(height: 4),

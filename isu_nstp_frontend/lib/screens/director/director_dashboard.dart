@@ -4,6 +4,7 @@ import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
 import '../profile_screen.dart';
 import 'director_oversight_screen.dart';
+import 'director_attendance_records_screen.dart';
 
 class DirectorDashboard extends StatefulWidget {
   final UserModel user;
@@ -20,6 +21,7 @@ class _DirectorDashboardState extends State<DirectorDashboard> {
   static const _titles = [
     'Campus Analytics',
     'Instructor Compliance',
+    'Attendance Records',
     'Export Master Data',
   ];
 
@@ -66,6 +68,7 @@ class _DirectorDashboardState extends State<DirectorDashboard> {
         builders: [
           (_) => const DirectorOversightScreen(initialTab: 0, embedded: true),
           (_) => const DirectorOversightScreen(initialTab: 1, embedded: true),
+          (_) => DirectorAttendanceRecordsScreen(user: widget.user),
           (_) => _ExportMasterDataTab(user: widget.user),
         ],
       ),
@@ -95,6 +98,11 @@ class _DirectorDashboardState extends State<DirectorDashboard> {
             icon: Icon(Icons.assignment_ind_outlined),
             activeIcon: Icon(Icons.assignment_ind),
             label: 'Instructors',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.receipt_long_outlined),
+            activeIcon: Icon(Icons.receipt_long),
+            label: 'Records',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.download_outlined),

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
@@ -50,6 +51,7 @@ class _InstructorExcusesScreenState extends State<InstructorExcusesScreen> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -453,6 +455,11 @@ class _InstructorExcusesScreenState extends State<InstructorExcusesScreen> {
                 style: const TextStyle(fontSize: 12),
               ),
             ),
+            if (excuse['attachment_url'] != null &&
+                excuse['attachment_url'].toString().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildAttachmentSection(excuse['attachment_url'].toString()),
+            ],
             if (excuse['submitted_at'] != null) ...[
               const SizedBox(height: 6),
               Text(
@@ -506,6 +513,147 @@ class _InstructorExcusesScreenState extends State<InstructorExcusesScreen> {
                 ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  bool _isImageUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.bmp');
+  }
+
+  String _fileNameFromUrl(String url) {
+    final segments = Uri.parse(url).pathSegments;
+    if (segments.isEmpty) return 'attachment';
+    return segments.last;
+  }
+
+  Widget _buildAttachmentSection(String url) {
+    if (_isImageUrl(url)) {
+      return GestureDetector(
+        onTap: () => _viewFullImage(url),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxHeight: 150),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Image.network(
+              url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Icon(Icons.broken_image, color: Colors.grey.shade500),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Could not load image',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // PDF / doc — show a tappable chip
+    final fileName = _fileNameFromUrl(url);
+    return InkWell(
+      onTap: () async {
+        final uri = Uri.parse(url);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.blue.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.blue.shade200),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              fileName.toLowerCase().endsWith('.pdf')
+                  ? Icons.picture_as_pdf
+                  : Icons.description,
+              size: 20,
+              color: Colors.blue.shade700,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                fileName,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.blue.shade700,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Icon(Icons.open_in_new, size: 16, color: Colors.blue.shade400),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _viewFullImage(String url) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: GestureDetector(
+          onTap: () => Navigator.of(context).pop(),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.broken_image, color: Colors.white54, size: 48),
+                        SizedBox(height: 8),
+                        Text('Could not load image',
+                            style: TextStyle(color: Colors.white54)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 16,
+                right: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
