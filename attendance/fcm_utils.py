@@ -235,6 +235,8 @@ def _send_to_student(student, title, body, data):
         notification=messaging.Notification(title=title, body=body),
         data={k: str(v) for k, v in data.items()},
         token=token,
+        android=_urgent_android(),
+        apns=_urgent_apns(),
     )
     try:
         messaging.send(message)

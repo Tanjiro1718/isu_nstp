@@ -1,5 +1,16 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import 'device_token_service.dart';
+import 'session_service.dart';
+
+/// The Android notification channel every push from the backend targets
+/// (matching `_urgent_android()` in the Django `fcm_utils.py`).
+const String kAttendanceChannelId = 'attendance_alerts';
+const String kAttendanceChannelName = 'Attendance Alerts';
+const String kAttendanceChannelDescription =
+    'Alerts for attendance sessions, presence checks and time-out windows.';
 
 /// Top-level background message handler.
 /// MUST be defined outside any class and annotated with `@pragma('vm:entry-point')`
@@ -10,11 +21,54 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   debugPrint("Background Notification Body: ${message.notification?.body}");
 }
 
+/// Show a push as a system-style notification, even while the app is open in
+/// the foreground, so the student is not dependent on the polling loop alone.
+Future<void> showLocalNotification(RemoteMessage message) async {
+  final title = message.notification?.title ?? 'ISU NSTP';
+  final body = message.notification?.body ?? 'Tap to view details.';
+  const androidDetails = AndroidNotificationDetails(
+    kAttendanceChannelId,
+    kAttendanceChannelName,
+    channelDescription: kAttendanceChannelDescription,
+    importance: Importance.max,
+    priority: Priority.high,
+    playSound: true,
+  );
+  const darwinDetails = DarwinNotificationDetails(
+    presentAlert: true,
+    presentBanner: true,
+    presentBadge: true,
+    presentSound: true,
+  );
+  try {
+    await NotificationService.localNotifications.show(
+      message.messageId.hashCode,
+      title,
+      body,
+      const NotificationDetails(
+        android: androidDetails,
+        iOS: darwinDetails,
+      ),
+    );
+  } catch (e) {
+    debugPrint('Could not show local notification: $e');
+  }
+}
+
 class NotificationService {
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
 
+  /// Plugin used to surface notifications while the app is foregrounded.
+  static final FlutterLocalNotificationsPlugin localNotifications =
+      FlutterLocalNotificationsPlugin();
+
   /// Call this in `main.dart` to initialize all notification listeners
   Future<void> initialize() async {
+    // 0. Create the Android channel so the backend's `attendance_alerts`
+    //    channel reference resolves on Android 8+. Without this the OS drops or
+    //    demotes every push (no heads-up alert, no sound, silent or hidden).
+    await _initLocalNotifications();
+
     // 1. Set top-level background message handler
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
@@ -30,8 +84,41 @@ class NotificationService {
     // 5. Listen for FCM Token updates
     _firebaseMessaging.onTokenRefresh.listen((newToken) {
       debugPrint("FCM Device Token Refreshed: $newToken");
-      // Optionally sync newToken with backend here
+      // FCM rotates tokens (app restore, cache clear, long idle). If the
+      // backend keeps the old token, pushes to it are silently rejected, so
+      // re-register the fresh token for the signed-in user.
+      _syncRefreshedToken(newToken);
     });
+  }
+
+  Future<void> _initLocalNotifications() async {
+    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const darwinInit = DarwinInitializationSettings();
+    const initSettings =
+        InitializationSettings(android: androidInit, iOS: darwinInit);
+    await localNotifications.initialize(initSettings);
+
+    const androidChannel = AndroidNotificationChannel(
+      kAttendanceChannelId,
+      kAttendanceChannelName,
+      description: kAttendanceChannelDescription,
+      importance: Importance.max,
+      playSound: true,
+    );
+    await localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(androidChannel);
+  }
+
+  Future<void> _syncRefreshedToken(String newToken) async {
+    try {
+      final user = await SessionService.loadUser();
+      if (user == null || user.id == 0) return;
+      await DeviceTokenService.registerWithToken(user.id, newToken);
+    } catch (e) {
+      debugPrint('Could not sync refreshed device token: $e');
+    }
   }
 
   /// Request push notification permissions from the user
@@ -83,8 +170,10 @@ class NotificationService {
       debugPrint('Foreground Notification Received: ${message.notification?.title}');
       debugPrint('Notification Body: ${message.notification?.body}');
       debugPrint('Data payload: ${message.data}');
-      
-      // Customize foreground alert popups here if needed
+
+      // Show the push as a system-style notification so the student still sees
+      // presence checks and session alerts while the app is open.
+      showLocalNotification(message);
     });
   }
 

@@ -18,7 +18,17 @@ class DeviceTokenService {
     try {
       final token = await NotificationService().getDeviceToken();
       if (token == null || token.isEmpty) return;
+      await registerWithToken(userId, token);
+    } catch (e) {
+      // The email fallback still delivers codes, so this is not fatal.
+      debugPrint('Could not register device token: $e');
+    }
+  }
 
+  /// Posts an already-known token to the backend for a user. Used both by
+  /// [register] and when FCM rotates the token at runtime.
+  static Future<void> registerWithToken(int userId, String token) async {
+    try {
       await http
           .post(
             Uri.parse('${ApiConfig.baseUrl}/api/device-token/'),
@@ -30,7 +40,6 @@ class DeviceTokenService {
           )
           .timeout(const Duration(seconds: 8));
     } catch (e) {
-      // The email fallback still delivers codes, so this is not fatal.
       debugPrint('Could not register device token: $e');
     }
   }

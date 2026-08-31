@@ -10,7 +10,6 @@ import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
 import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
-import '../profile_screen.dart';
 import 'attendance_history_screen.dart';
 import 'student_checkin_screen.dart';
 
@@ -1142,23 +1141,6 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 : _buildProfileDetails(),
           ),
           actions: [
-            // Security lives on the shared profile screen, so send them there.
-            TextButton.icon(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ProfileScreen(user: _currentUser),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.lock_reset, size: 18, color: isuGreen),
-              label: const Text(
-                'Change Password',
-                style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold),
-              ),
-            ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text(

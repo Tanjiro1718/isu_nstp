@@ -4,7 +4,6 @@ import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
 import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
-import '../profile_screen.dart';
 import 'instructor_settings_screen.dart';
 import 'instructor_monitor_screen.dart';
 import 'instructor_classes_screen.dart';
@@ -161,25 +160,6 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
             ),
           ),
           actions: [
-            TextButton.icon(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ProfileScreen(user: widget.user),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.lock_reset, size: 18, color: isuGreen),
-              label: const Text(
-                'Change Password',
-                style: TextStyle(
-                  color: isuGreen,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text(
