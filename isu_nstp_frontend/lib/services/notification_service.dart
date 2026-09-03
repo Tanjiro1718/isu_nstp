@@ -12,6 +12,28 @@ const String kAttendanceChannelName = 'Attendance Alerts';
 const String kAttendanceChannelDescription =
     'Alerts for attendance sessions, presence checks and time-out windows.';
 
+/// Tab index of the instructor's Monitor/Headcounts tab, used by the
+/// deep-link that fires when an instructor taps a "student checked in" push.
+const int kInstructorMonitorTabIndex = 1;
+
+/// A request to move the instructor dashboard to a specific place after the
+/// user taps a push notification.
+class InstructorNavRequest {
+  final int tabIndex;
+  final int recordId;
+  final int sessionId;
+  const InstructorNavRequest({
+    required this.tabIndex,
+    this.recordId = 0,
+    this.sessionId = 0,
+  });
+}
+
+/// Global intent bus: NotificationService publishes to it when an instructor
+/// taps a notification; InstructorDashboard listens and switches tabs.
+final ValueNotifier<InstructorNavRequest?> instructorNavRequests =
+    ValueNotifier<InstructorNavRequest?>(null);
+
 /// Top-level background message handler.
 /// MUST be defined outside any class and annotated with `@pragma('vm:entry-point')`
 @pragma('vm:entry-point')
@@ -177,18 +199,33 @@ class NotificationService {
     });
   }
 
+  /// Routes a tapped notification to the right place.
+  ///
+  /// Currently used to send an instructor who taps a "student checked in"
+  /// push to their Monitor/Headcounts tab.
+  void _handleTap(RemoteMessage message) {
+    debugPrint("Notification tap data: ${message.data}");
+    if (message.data['type'] == 'check_in') {
+      instructorNavRequests.value = const InstructorNavRequest(
+        tabIndex: kInstructorMonitorTabIndex,
+      );
+    }
+  }
+
   /// Handles actions when a user taps a notification banner
   void _setupNotificationClickHandlers() {
     // Case A: App was fully terminated and opened by tapping a notification
     _firebaseMessaging.getInitialMessage().then((RemoteMessage? message) {
       if (message != null) {
         debugPrint("App opened from terminated state via notification click: ${message.notification?.title}");
+        _handleTap(message);
       }
     });
 
     // Case B: App was running in background and brought to foreground by tapping notification
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint("App opened from background via notification click: ${message.notification?.title}");
+      _handleTap(message);
     });
   }
 }

@@ -289,9 +289,10 @@ class PresenceCheck(models.Model):
     responded_at = models.DateTimeField(blank=True, null=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
 
-    # Where the student was when they answered.
+    # Where the student was when they answered, plus the required proof photo.
     response_latitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
     response_longitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    response_photo = models.ImageField(upload_to='presence_checks/', blank=True, null=True)
     was_warning = models.BooleanField(default=False)
 
     class Meta:
@@ -486,6 +487,7 @@ class AttendanceExcuse(models.Model):
     KIND_CHOICES = (
         ('missed_check', 'Missed Presence Check'),
         ('absent', 'Did Not Time In'),
+        ('future_absence', 'Will Not Attend'),
     )
     STATUS_CHOICES = (
         ('pending', 'Awaiting Review'),
@@ -542,4 +544,80 @@ class AttendanceExcuse(models.Model):
     def __str__(self):
         return f"{self.student} excuse for {self.session.title} [{self.status}]"
 
+
+# 10. Geofence leave requests: student steps out temporarily during a session
+class GeofenceLeaveRequest(models.Model):
+    """
+    A student's request to temporarily leave the activity geofence.
+
+    When approved (or auto-approved), the student has 15 minutes to return.
+    If they do not return within the deadline, the request is marked
+    ``deserted`` and the instructor is notified.
+    """
+
+    LEAVE_DURATION_MINUTES = 15
+
+    STATUS_CHOICES = (
+        ('pending', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('returned', 'Returned'),
+        ('deserted', 'Did Not Return'),
+    )
+
+    record = models.ForeignKey(
+        AttendanceRecord, on_delete=models.CASCADE, related_name='leave_requests'
+    )
+    session = models.ForeignKey(
+        AttendanceSession, on_delete=models.CASCADE, related_name='leave_requests'
+    )
+    student = models.ForeignKey(
+        StudentProfile, on_delete=models.CASCADE, related_name='leave_requests'
+    )
+
+    reason = models.TextField()
+    requested_at = models.DateTimeField(auto_now_add=True)
+    deadline = models.DateTimeField()
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+
+    # Instructor decision
+    reviewed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL,
+        blank=True, null=True,
+        limit_choices_to={'role': 'instructor'},
+    )
+    reviewed_at = models.DateTimeField(blank=True, null=True)
+    response_note = models.TextField(blank=True, null=True)
+
+    # Return tracking
+    returned_at = models.DateTimeField(blank=True, null=True)
+    return_latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, blank=True, null=True
+    )
+    return_longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, blank=True, null=True
+    )
+
+    class Meta:
+        ordering = ['-requested_at']
+
+    @property
+    def is_active(self):
+        """Currently outside the geofence (approved and not yet returned)."""
+        return self.status == 'approved' and self.returned_at is None
+
+    @property
+    def seconds_remaining(self):
+        """Seconds left before the deadline, or 0 if expired."""
+        if self.status != 'approved' or self.returned_at is not None:
+            return 0
+        remaining = (self.deadline - timezone.now()).total_seconds()
+        return max(0, int(remaining))
+
+    def __str__(self):
+        return (
+            f"{self.student} leave request for {self.session.title} "
+            f"[{self.status}]"
+        )
 

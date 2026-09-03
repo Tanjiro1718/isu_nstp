@@ -160,6 +160,39 @@ class ApiConfig {
   /// Instructor approves or rejects one excuse.
   static String reviewExcuseUrl(int excuseId) =>
       '$baseUrl/api/excuses/$excuseId/review/';
+
+  /// Rid the student's upcoming sessions they have not yet excused.
+  static String upcomingSessionsUrl(int studentUserId) =>
+      '$baseUrl/api/attendance/upcoming-sessions/?student_id=$studentUserId';
+
+  // ---------------------------------------------------------------
+  // Geofence leave requests
+  // ---------------------------------------------------------------
+
+  /// Student requests to temporarily leave the activity area.
+  static String get requestLeaveUrl => '$baseUrl/api/attendance/request-leave/';
+
+  /// Student's app sends GPS while outside the geofence.
+  static String get leaveLocationUpdateUrl =>
+      '$baseUrl/api/attendance/leave-location-update/';
+
+  /// Student confirms they are back within the geofence.
+  static String get returnToGeofenceUrl =>
+      '$baseUrl/api/attendance/return-to-geofence/';
+
+  /// Student polls current leave status and timer.
+  static String leaveStatusUrl(int studentUserId, int sessionId) =>
+      '$baseUrl/api/attendance/leave-status/'
+      '?student_id=$studentUserId&session_id=$sessionId';
+
+  /// Instructor sees pending leave requests for today.
+  static String pendingLeavesUrl(int instructorId, {String status = 'all'}) =>
+      '$baseUrl/api/attendance/pending-leaves/'
+      '?instructor_id=$instructorId&status=$status';
+
+  /// Instructor approves or rejects a leave request.
+  static String reviewLeaveUrl(int leaveId) =>
+      '$baseUrl/api/attendance/leave/$leaveId/review/';
 }
 
 

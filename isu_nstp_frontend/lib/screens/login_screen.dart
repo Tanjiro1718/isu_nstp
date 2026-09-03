@@ -519,7 +519,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // OFFICIAL ISU SEAL LOGO
                         Image.asset(
                           'assets/images/isu_logo.png',
                           height: 90,

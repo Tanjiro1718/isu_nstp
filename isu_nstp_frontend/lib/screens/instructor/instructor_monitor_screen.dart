@@ -45,16 +45,24 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
   SessionRoster? _roster;
   Timer? _rosterPoller;
   bool _isOpeningCheckOut = false;
+  bool _showStandbyRoster = false;
+
+  // --- Geofence leave requests ---
+  List<Map<String, dynamic>> _pendingLeaves = [];
 
   @override
   void initState() {
     super.initState();
     _fetchLogs();
+    _fetchPendingLeaves();
     // Poll so newly answered presence checks and time-outs appear without the
     // instructor having to pull to refresh.
     _rosterPoller = Timer.periodic(
       const Duration(seconds: 20),
-      (_) => _refreshRoster(),
+      (_) {
+        _refreshRoster();
+        _fetchPendingLeaves();
+      },
     );
   }
 
@@ -151,6 +159,361 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
       ),
     );
     await _refreshRoster();
+  }
+
+  // ------------------------------------------------------------------
+  // Geofence leave requests
+  // ------------------------------------------------------------------
+
+  Future<void> _fetchPendingLeaves() async {
+    final instructorId = widget.instructor?.id;
+    if (instructorId == null) return;
+
+    try {
+      final response = await http.get(
+        Uri.parse(ApiConfig.pendingLeavesUrl(instructorId, status: 'all')),
+        headers: {'ngrok-skip-browser-warning': 'true'},
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final body = jsonDecode(response.body);
+        final leaves = body['leaves'];
+        if (leaves is List) {
+          setState(() {
+            _pendingLeaves = leaves.cast<Map<String, dynamic>>();
+          });
+        }
+      }
+    } catch (_) {
+      // Polling failure should not disrupt the UI.
+    }
+  }
+
+  Future<void> _reviewLeave(
+    int leaveId,
+    String decision, {
+    String note = '',
+  }) async {
+    final instructorId = widget.instructor?.id;
+    if (instructorId == null) return;
+
+    try {
+      final response = await http.patch(
+        Uri.parse(ApiConfig.reviewLeaveUrl(leaveId)),
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: jsonEncode({
+          'instructor_id': instructorId,
+          'decision': decision,
+          'response_note': note,
+        }),
+      );
+
+      if (!mounted) return;
+
+      String message = 'Leave request updated.';
+      try {
+        final body = jsonDecode(response.body);
+        if (body is Map && body['message'] != null) {
+          message = body['message'].toString();
+        }
+      } catch (_) {}
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: response.statusCode == 200 ? Colors.green : Colors.red,
+        ),
+      );
+
+      await _fetchPendingLeaves();
+      await _refreshRoster();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Network error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  void _showReviewLeaveDialog(Map<String, dynamic> leave) {
+    final noteController = TextEditingController();
+    final studentName = leave['student_name']?.toString() ?? 'Student';
+    final reason = leave['reason']?.toString() ?? '';
+    final leaveId = leave['id'];
+    final status = leave['status']?.toString() ?? 'pending';
+    final secondsRemaining = leave['seconds_remaining'] ?? 0;
+    final minutes = (secondsRemaining as int) ~/ 60;
+    final seconds = (secondsRemaining as int) % 60;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(
+              status == 'pending'
+                  ? Icons.directions_walk
+                  : (status == 'approved' ? Icons.check_circle : Icons.cancel),
+              color: status == 'pending'
+                  ? Colors.orange
+                  : (status == 'approved' ? Colors.green : Colors.red),
+              size: 28,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Leave Request',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _leaveDetailLine('Student', studentName),
+              _leaveDetailLine('Reason', reason),
+              if (status == 'pending' && secondsRemaining > 0)
+                _leaveDetailLine(
+                  'Time remaining',
+                  '$minutes:${seconds.toString().padLeft(2, '0')}',
+                ),
+              _leaveDetailLine('Status', status.toUpperCase()),
+              if (leave['response_note'] != null)
+                _leaveDetailLine('Note', leave['response_note'].toString()),
+              if (status == 'pending') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: noteController,
+                  maxLines: 2,
+                  maxLength: 300,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    labelText: 'Note (optional)',
+                    hintText: 'Add a note for the student',
+                    hintStyle: const TextStyle(fontSize: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+          if (status == 'pending') ...[
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _reviewLeave(leaveId, 'reject', note: noteController.text.trim());
+              },
+              child: const Text(
+                'Reject',
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+              ),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _reviewLeave(leaveId, 'approve', note: noteController.text.trim());
+              },
+              style: FilledButton.styleFrom(backgroundColor: Colors.green),
+              child: const Text('Approve'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _leaveDetailLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Colors.grey,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  /// Builds the leave requests panel shown above the standby panel.
+  Widget _buildLeaveRequestsPanel() {
+    if (_pendingLeaves.isEmpty) return const SizedBox.shrink();
+
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.directions_walk, color: Colors.orange.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Geofence Leave Requests',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_pendingLeaves.length}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange.shade900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ..._pendingLeaves.map((leave) => _buildLeaveRow(leave)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLeaveRow(Map<String, dynamic> leave) {
+    final studentName = leave['student_name']?.toString() ?? 'Student';
+    final reason = leave['reason']?.toString() ?? '';
+    final status = leave['status']?.toString() ?? 'pending';
+    final secondsRemaining = leave['seconds_remaining'] ?? 0;
+    final minutes = (secondsRemaining as int) ~/ 60;
+    final seconds = (secondsRemaining as int) % 60;
+
+    late final Color color;
+    late final Color darkColor;
+    late final IconData icon;
+    late final String statusLabel;
+
+    switch (status) {
+      case 'approved':
+        color = Colors.green;
+        darkColor = Colors.green.shade900;
+        icon = Icons.check_circle;
+        statusLabel = secondsRemaining > 0
+            ? 'Outside \u00b7 $minutes:${seconds.toString().padLeft(2, '0')} left'
+            : 'Approved';
+        break;
+      case 'returned':
+        color = Colors.blue;
+        darkColor = Colors.blue.shade900;
+        icon = Icons.login;
+        statusLabel = 'Returned';
+        break;
+      case 'rejected':
+        color = Colors.red;
+        darkColor = Colors.red.shade900;
+        icon = Icons.cancel;
+        statusLabel = 'Rejected';
+        break;
+      case 'deserted':
+        color = Colors.red;
+        darkColor = Colors.red.shade900;
+        icon = Icons.warning;
+        statusLabel = 'Did not return';
+        break;
+      default:
+        color = Colors.orange;
+        darkColor = Colors.orange.shade900;
+        icon = Icons.pending;
+        statusLabel = 'Pending review';
+    }
+
+    return InkWell(
+      onTap: () => _showReviewLeaveDialog(leave),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    studentName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (reason.isNotEmpty)
+                    Text(
+                      reason.length > 60
+                          ? '${reason.substring(0, 60)}...'
+                          : reason,
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                statusLabel,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: darkColor,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _fetchLogs() async {
@@ -698,12 +1061,88 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
 
             if (roster.students.isNotEmpty) ...[
               const Divider(height: 24),
-              const Text(
-                'Presence checks answered',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+
+              // Collapsible "Presence checks answered" section. Collapsed by
+              // default so the panel stays clean; expanding reveals the
+              // students still on standby.
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () =>
+                    setState(() => _showStandbyRoster = !_showStandbyRoster),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 4,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.fact_check_outlined,
+                          size: 18, color: Colors.orange),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Presence checks answered',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.shade200),
+                        ),
+                        child: Text(
+                          '${roster.standby} on standby',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        _showStandbyRoster
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        size: 20,
+                        color: Colors.grey.shade600,
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(height: 8),
-              ...roster.students.map(_buildRosterRow),
+              if (_showStandbyRoster) ...[
+                const SizedBox(height: 8),
+                Builder(builder: (context) {
+                  final standby = roster.students
+                      .where((e) => e.isStandby)
+                      .toList();
+                  if (standby.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'No students on standby right now.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    );
+                  }
+                  return Column(
+                    children: standby.map(_buildRosterRow).toList(),
+                  );
+                }),
+              ],
             ],
           ],
         ),
@@ -837,6 +1276,19 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
     );
   }
 
+  /// Neutral placeholder shown when a submission has no time-out photo.
+  Widget _buildNoPhotoPlaceholder() {
+    return Container(
+      color: Colors.grey.shade200,
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.person_outline,
+        size: 26,
+        color: Colors.grey.shade500,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filteredLogs = _filteredLogs;
@@ -888,28 +1340,35 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildMetricCard(
-                          title: 'Attendance Records',
-                          value: '${filteredLogs.length} Submissions',
-                          icon: Icons.assignment_ind,
-                          color: Colors.blue,
+                  Builder(builder: (context) {
+                    final photoCount = filteredLogs
+                        .where((log) =>
+                            (log['selfie_image_url']?.toString() ?? '').isNotEmpty)
+                        .length;
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: _buildMetricCard(
+                            title: 'Attendance Records',
+                            value: '${filteredLogs.length} Submissions',
+                            icon: Icons.assignment_ind,
+                            color: Colors.blue,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildMetricCard(
-                          title: 'Picture Submissions',
-                          value: '${filteredLogs.where((log) => (log['selfie_image_url']?.toString() ?? '').isNotEmpty).length} With Selfie Proof',
-                          icon: Icons.image_search,
-                          color: Colors.teal,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildMetricCard(
+                            title: 'Picture Submissions',
+                            value: '$photoCount Photos',
+                            icon: Icons.image_search,
+                            color: Colors.teal,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    );
+                  }),
                   const SizedBox(height: 16),
+                  _buildLeaveRequestsPanel(),
                   _buildStandbyPanel(),
                   Wrap(
                     spacing: 12,
@@ -983,30 +1442,72 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                         final selfieUrl = log['selfie_image_url']?.toString();
                         final hasPhoto = selfieUrl != null && selfieUrl.isNotEmpty;
                         final studentName = log['student_name']?.toString() ?? 'Unknown Student';
+                        final checkInTime = log['time']?.toString() ?? '';
 
                         return ListTile(
-                          // Show the selfie if available; wrap in GestureDetector to view large image
+                          // Show the time-out selfie as a tidy rounded thumbnail;
+                          // tap to view it large when one is available.
                           leading: GestureDetector(
-                            onTap: hasPhoto ? () => _showExpandedImage(selfieUrl, studentName) : null,
-                            child: CircleAvatar(
-                              radius: 24, 
-                              backgroundColor: Colors.blueAccent.withValues(alpha: 0.2),
-                              backgroundImage: hasPhoto ? NetworkImage(selfieUrl) : null,
-                              child: hasPhoto 
-                                  ? null 
-                                  : const Icon(Icons.person, color: Colors.blueAccent),
+                            onTap: hasPhoto
+                                ? () => _showExpandedImage(selfieUrl, studentName)
+                                : null,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: SizedBox(
+                                width: 48,
+                                height: 48,
+                                child: hasPhoto
+                                    ? Image.network(
+                                        selfieUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (context, error, _) =>
+                                            _buildNoPhotoPlaceholder(),
+                                      )
+                                    : _buildNoPhotoPlaceholder(),
+                              ),
                             ),
                           ),
-                          title: Text(studentName),
-                          subtitle: Text(
-                              '${log['date'] ?? '--'} • ${log['session_title'] ?? '--'} • ${log['department'] ?? ''}'),
-                          // Location Icon now opens just the map
+                          title: Text(
+                            studentName,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          isThreeLine: true,
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${log['date'] ?? '--'} • ${log['session_title'] ?? '--'}'
+                                '${(log['department']?.toString() ?? '').isNotEmpty ? ' • ${log['department']}' : ''}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (checkInTime.isNotEmpty)
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.schedule,
+                                        size: 13, color: Colors.green.shade700),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Checked in $checkInTime',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.green.shade700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                          // Location icon opens just the map.
                           trailing: IconButton(
-                            icon: const Icon(Icons.location_on, color: Colors.redAccent),
+                            icon: const Icon(Icons.location_on,
+                                color: Colors.redAccent),
                             tooltip: 'View Map Location',
                             onPressed: () => _showLocationOnlyDialog(log),
                           ),
-                          // Tapping the middle of the tile still opens the full record with all details
+                          // Tapping the middle of the tile opens the full record.
                           onTap: () => _showRecordDialog(log),
                         );
                       },

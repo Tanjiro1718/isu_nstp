@@ -473,7 +473,7 @@ def send_presence_failed(record):
     """Second strike: check-out is now blocked for this activity."""
     return _send_to_student(
         record.student,
-        title="❌ Attendance verification failed",
+        title="\u274c Attendance verification failed",
         body=(
             "You ignored repeated presence checks, so you can no longer submit "
             "a time-out photo for this activity. Please see your instructor."
@@ -485,3 +485,159 @@ def send_presence_failed(record):
             "missed_checks": record.missed_checks,
         },
     )
+
+
+# ------------------------------------------------------------------
+# Geofence leave requests
+# ------------------------------------------------------------------
+
+def send_leave_request_notification(leave):
+    """
+    Tell the instructor a student has requested to leave the geofence.
+
+    Aimed at the instructor's push token, same as excuse notifications.
+    """
+    if not firebase_admin._apps:
+        print("Firebase is not initialized. Cannot send push.")
+        return False
+
+    instructor = leave.session.instructor
+    token = getattr(instructor, 'push_token', None)
+    if not token:
+        print(f"No device token for {instructor.username}; leave push skipped.")
+        return False
+
+    student_name = leave.student.user.get_full_name() or leave.student.user.username
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title="Student requesting to leave \ud83d\udeaa",
+            body=(
+                f"{student_name} wants to leave the activity area temporarily. "
+                "Tap to review."
+            ),
+        ),
+        data={
+            "type": "leave_request",
+            "leave_id": str(leave.id),
+            "session_id": str(leave.session_id),
+            "student_name": student_name,
+        },
+        token=token,
+    )
+
+    try:
+        messaging.send(message)
+        return True
+    except Exception as e:
+        print(f"Error sending leave push to {instructor.username}: {e}")
+        return False
+
+
+def send_leave_reviewed(leave):
+    """Tell the student whether their leave request was approved or rejected."""
+    approved = leave.status == 'approved'
+    note = (leave.response_note or '').strip()
+
+    if approved:
+        title = "Leave approved \u2705"
+        body = (
+            f"Your request to leave for \"{leave.session.title}\" was approved. "
+            "You have 15 minutes to return."
+        )
+    else:
+        title = "Leave rejected \u274c"
+        body = (
+            f"Your request to leave for \"{leave.session.title}\" was not approved."
+        )
+    if note:
+        body = f"{body} Note: {note}"
+
+    return _send_to_student(
+        leave.student,
+        title=title,
+        body=body,
+        data={
+            "type": "leave_reviewed",
+            "leave_id": leave.id,
+            "session_id": leave.session_id,
+            "status": leave.status,
+        },
+    )
+
+
+def send_leave_expired(leave):
+    """Tell the instructor the student did not return within the deadline."""
+    if not firebase_admin._apps:
+        print("Firebase is not initialized. Cannot send push.")
+        return False
+
+    instructor = leave.session.instructor
+    token = getattr(instructor, 'push_token', None)
+    if not token:
+        print(f"No device token for {instructor.username}; leave-expired push skipped.")
+        return False
+
+    student_name = leave.student.user.get_full_name() or leave.student.user.username
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title="Student did not return \u23f0",
+            body=(
+                f"{student_name} did not return to the activity area within "
+                "the 15-minute deadline."
+            ),
+        ),
+        data={
+            "type": "leave_expired",
+            "leave_id": str(leave.id),
+            "session_id": str(leave.session_id),
+            "student_name": student_name,
+        },
+        token=token,
+    )
+
+    try:
+        messaging.send(message)
+        return True
+    except Exception as e:
+        print(f"Error sending leave-expired push to {instructor.username}: {e}")
+        return False
+
+
+def send_check_in_notification(record):
+    """
+    Tell the instructor a student has checked in to the activity.
+
+    Aimed at User.push_token (not StudentProfile.fcm_token) because the
+    recipient here is staff, not a student - same as excuse notifications.
+    """
+    if not firebase_admin._apps:
+        print("Firebase is not initialized. Cannot send push.")
+        return False
+
+    instructor = record.session.instructor
+    token = getattr(instructor, 'push_token', None)
+    if not token:
+        print(f"No device token for {instructor.username}; check-in push skipped.")
+        return False
+
+    student_name = record.student.user.get_full_name() or record.student.user.username
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title="New check-in \U0001F4CD",
+            body=f"{student_name} checked in to {record.session.title}.",
+        ),
+        data={
+            "type": "check_in",
+            "record_id": str(record.id),
+            "session_id": str(record.session_id),
+            "student_name": student_name,
+        },
+        token=token,
+    )
+
+    try:
+        messaging.send(message)
+        return True
+    except Exception as e:
+        print(f"Error sending check-in push to {instructor.username}: {e}")
+        return False

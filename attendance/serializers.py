@@ -5,6 +5,7 @@ from .models import (
     AttendanceSession,
     AttendanceRecord,
     AttendanceExcuse,
+    GeofenceLeaveRequest,
     StudentProfile,
     SystemSettings,
     ClassGroup,
@@ -464,4 +465,69 @@ class AttendanceExcuseSerializer(serializers.ModelSerializer):
         if request is not None:
             return request.build_absolute_uri(obj.attachment.url)
         return obj.attachment.url
+
+
+class GeofenceLeaveRequestSerializer(serializers.ModelSerializer):
+    """
+    A student's temporary leave request, used on both the student's own list
+    and the instructor's pending-leave queue.
+    """
+
+    student_name = serializers.SerializerMethodField()
+    student_number = serializers.CharField(source='student.student_id', read_only=True)
+    session_title = serializers.CharField(source='session.title', read_only=True)
+    session_date = serializers.DateTimeField(
+        source='session.date_time', format='%m/%d/%Y %I:%M %p', read_only=True
+    )
+    requested_at = serializers.DateTimeField(
+        format='%I:%M %p', read_only=True
+    )
+    reviewed_at = serializers.DateTimeField(
+        format='%I:%M %p', read_only=True
+    )
+    reviewed_by_name = serializers.SerializerMethodField()
+    seconds_remaining = serializers.IntegerField(read_only=True)
+    deadline = serializers.DateTimeField(format='%I:%M %p', read_only=True)
+
+    class Meta:
+        model = GeofenceLeaveRequest
+        fields = [
+            'id',
+            'session',
+            'session_title',
+            'session_date',
+            'student_name',
+            'student_number',
+            'reason',
+            'requested_at',
+            'deadline',
+            'status',
+            'seconds_remaining',
+            'response_note',
+            'reviewed_at',
+            'reviewed_by_name',
+            'returned_at',
+            'return_latitude',
+            'return_longitude',
+        ]
+        read_only_fields = [
+            'status',
+            'response_note',
+            'requested_at',
+            'deadline',
+            'reviewed_at',
+            'reviewed_by_name',
+            'returned_at',
+            'return_latitude',
+            'return_longitude',
+        ]
+
+    def get_student_name(self, obj):
+        user = obj.student.user
+        return user.get_full_name() or user.username
+
+    def get_reviewed_by_name(self, obj):
+        if not obj.reviewed_by:
+            return None
+        return obj.reviewed_by.get_full_name() or obj.reviewed_by.username
 

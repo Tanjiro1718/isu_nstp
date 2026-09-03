@@ -40,6 +40,13 @@ from .views import (
     StudentExcuseAPIView,
     InstructorExcuseListAPIView,
     ReviewExcuseAPIView,
+    RequestLeaveAPIView,
+    LeaveLocationUpdateAPIView,
+    ReturnToGeofenceAPIView,
+    LeaveStatusAPIView,
+    PendingLeavesAPIView,
+    ReviewLeaveAPIView,
+    UpcomingSessionsForStudentAPIView,
 )
 
 
@@ -101,6 +108,18 @@ urlpatterns = [
     path('excuses/', StudentExcuseAPIView.as_view(), name='student-excuses'),
     path('excuses/review-queue/', InstructorExcuseListAPIView.as_view(), name='instructor-excuses'),
     path('excuses/<int:pk>/review/', ReviewExcuseAPIView.as_view(), name='review-excuse'),
+
+    # Geofence leave requests
+    path('attendance/request-leave/', RequestLeaveAPIView.as_view(), name='request-leave'),
+    path('attendance/leave-location-update/', LeaveLocationUpdateAPIView.as_view(), name='leave-location-update'),
+    path('attendance/return-to-geofence/', ReturnToGeofenceAPIView.as_view(), name='return-to-geofence'),
+    path('attendance/leave-status/', LeaveStatusAPIView.as_view(), name='leave-status'),
+    path('attendance/pending-leaves/', PendingLeavesAPIView.as_view(), name='pending-leaves'),
+    path('attendance/leave/<int:pk>/review/', ReviewLeaveAPIView.as_view(), name='review-leave'),
+
+    # Upcoming sessions the student can pre-file an excuse for.
+    path('attendance/upcoming-sessions/', UpcomingSessionsForStudentAPIView.as_view(), name='upcoming-sessions'),
+
     path('my-classes/', StudentClassListAPIView.as_view(), name='student-class-list'),
     path('my-classes/leave/', StudentLeaveClassAPIView.as_view(), name='student-class-leave'),
 

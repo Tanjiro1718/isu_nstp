@@ -13,6 +13,7 @@ from .models import (
     AttendanceSession,
     AttendanceRecord,
     AttendanceExcuse,
+    GeofenceLeaveRequest,
     StudentProfile,
     SystemSettings,
     ClassGroup,
@@ -24,6 +25,7 @@ from .serializers import (
     UserSerializer,
     AttendanceLogSerializer,
     AttendanceExcuseSerializer,
+    GeofenceLeaveRequestSerializer,
     SessionSerializer,
     SystemSettingsSerializer,
     ClassGroupSerializer,
@@ -51,6 +53,9 @@ from .fcm_utils import (
     send_password_changed_alert,
     send_excuse_submitted,
     send_excuse_reviewed,
+    send_leave_request_notification,
+    send_leave_reviewed,
+    send_check_in_notification,
 )
 from .presence import dispatch_due_presence_checks
 from .session_alerts import dispatch_due_session_alerts
@@ -988,6 +993,12 @@ class ProcessCheckInAPI(APIView):
                     face_similarity=face_similarity,
                 )
 
+                # Tell the instructor this student just checked in.
+                try:
+                    send_check_in_notification(record)
+                except Exception as push_err:
+                    print(f"Check-in push to instructor failed: {push_err}")
+
                 # Queue the random "are you still there?" prompts for this student.
                 checks = record.schedule_presence_checks()
 
@@ -1076,6 +1087,7 @@ class PresenceStatusAPIView(APIView):
 class RespondPresenceCheckAPIView(APIView):
     """Student taps 'I'm still here' - must be inside the geofence to count."""
     permission_classes = [AllowAny]
+    parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request):
         check_id = request.data.get('check_id')
@@ -1083,6 +1095,13 @@ class RespondPresenceCheckAPIView(APIView):
 
         if not check_id or not student_id:
             return Response({'error': 'check_id and student_id are required'}, status=400)
+
+        # A live front-camera photo is mandatory proof for every presence check.
+        photo = request.FILES.get('response_photo')
+        if photo is None:
+            return Response({
+                'error': 'A photo is required to confirm your presence.',
+            }, status=400)
 
         try:
             check = PresenceCheck.objects.select_related(
@@ -1130,8 +1149,10 @@ class RespondPresenceCheckAPIView(APIView):
         check.responded_at = timezone.now()
         check.response_latitude = lat
         check.response_longitude = lng
+        check.response_photo = photo
         check.save(update_fields=[
-            'status', 'responded_at', 'response_latitude', 'response_longitude'
+            'status', 'responded_at', 'response_latitude', 'response_longitude',
+            'response_photo',
         ])
 
         return Response({
@@ -2745,12 +2766,74 @@ class StudentExcuseAPIView(APIView):
                     status=403,
                 )
 
-        # Nothing to excuse before the activity has even started.
-        if timezone.now() < session.date_time:
+        now = timezone.now()
+        is_future = now < session.date_time
+
+        # --- Future absence: student knows they cannot attend ---
+        if is_future:
+            kind = 'future_absence'
+            record = None
+
+            # A clean attendance needs no excuse.
+            existing = AttendanceExcuse.objects.filter(
+                session=session, student=profile
+            ).first()
+
+            if existing and existing.status != 'pending':
+                return Response(
+                    {
+                        'error': (
+                            f'Your excuse for this activity was already '
+                            f'{existing.status}. Please talk to your instructor.'
+                        ),
+                        'status': existing.status,
+                    },
+                    status=409,
+                )
+
+            attachment = request.FILES.get('attachment')
+
+            if existing:
+                existing.reason = reason
+                existing.kind = kind
+                existing.record = None
+                if attachment:
+                    existing.attachment = attachment
+                existing.save()
+                excuse = existing
+                created = False
+            else:
+                excuse = AttendanceExcuse.objects.create(
+                    session=session,
+                    student=profile,
+                    record=None,
+                    kind=kind,
+                    reason=reason,
+                    attachment=attachment,
+                )
+                created = True
+
+            try:
+                send_excuse_submitted(excuse)
+            except Exception as push_err:
+                print(f"Excuse push to instructor failed: {push_err}")
+
+            serializer = AttendanceExcuseSerializer(
+                excuse, context={'request': request}
+            )
             return Response(
-                {'error': 'This activity has not started yet.'}, status=400
+                {
+                    'message': (
+                        'Excuse submitted. Your instructor has been notified.'
+                        if created else
+                        'Excuse updated. Your instructor has been notified.'
+                    ),
+                    'excuse': serializer.data,
+                },
+                status=201 if created else 200,
             )
 
+        # --- Retroactive excuse: session already started or finished ---
         record = AttendanceRecord.objects.filter(
             session=session, student=profile
         ).first()
@@ -2948,5 +3031,477 @@ class ReviewExcuseAPIView(APIView):
             'message': f'Excuse {excuse.status}. The student has been notified.',
             'excuse': serializer.data,
         })
+
+
+# ------------------------------------------------------------------
+# Geofence leave requests
+# ------------------------------------------------------------------
+
+class RequestLeaveAPIView(APIView):
+    """
+    Student requests to temporarily leave the activity geofence.
+
+    POST { student_id, session_id, reason }
+
+    Creates a GeofenceLeaveRequest with a 15-minute deadline and notifies
+    the instructor via FCM.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        student_id = request.data.get('student_id')
+        session_id = request.data.get('session_id')
+        reason = str(request.data.get('reason') or '').strip()
+
+        if not student_id or not session_id or not reason:
+            return Response(
+                {'error': 'student_id, session_id, and reason are required.'},
+                status=400,
+            )
+
+        try:
+            profile = StudentProfile.objects.select_related('user').get(
+                user_id=student_id
+            )
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=404)
+
+        try:
+            session = AttendanceSession.objects.get(id=session_id)
+        except AttendanceSession.DoesNotExist:
+            return Response({'error': 'Activity not found'}, status=404)
+
+        # Must have an active attendance record for this session.
+        record = AttendanceRecord.objects.filter(
+            session=session, student=profile
+        ).first()
+        if not record:
+            return Response(
+                {'error': 'You must check in before requesting to leave.'},
+                status=400,
+            )
+
+        # Cannot request leave if already checked out.
+        if record.check_out_at is not None:
+            return Response(
+                {'error': 'You have already checked out from this activity.'},
+                status=400,
+            )
+
+        # Check for an existing active or pending leave request.
+        existing_active = GeofenceLeaveRequest.objects.filter(
+            record=record,
+            status__in=('pending', 'approved'),
+            returned_at__isnull=True,
+        ).first()
+        if existing_active:
+            return Response(
+                {'error': 'You already have an active leave request for this activity.'},
+                status=400,
+            )
+
+        now = timezone.now()
+        deadline = now + datetime.timedelta(
+            minutes=GeofenceLeaveRequest.LEAVE_DURATION_MINUTES
+        )
+
+        leave = GeofenceLeaveRequest.objects.create(
+            record=record,
+            session=session,
+            student=profile,
+            reason=reason,
+            deadline=deadline,
+            status='approved',  # Auto-approve: student can leave immediately
+        )
+
+        try:
+            send_leave_request_notification(leave)
+        except Exception as push_err:
+            print(f"Leave push to instructor failed: {push_err}")
+
+        serializer = GeofenceLeaveRequestSerializer(
+            leave, context={'request': request}
+        )
+        return Response(
+            {
+                'message': (
+                    'Leave request approved. You have '
+                    f'{GeofenceLeaveRequest.LEAVE_DURATION_MINUTES} minutes to return.'
+                ),
+                'leave': serializer.data,
+            },
+            status=201,
+        )
+
+
+class LeaveLocationUpdateAPIView(APIView):
+    """
+    Student's app sends GPS while they are outside the geofence.
+
+    POST { student_id, leave_id, latitude, longitude }
+
+    Updates the leave request's current location so the instructor can
+    track the student.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        student_id = request.data.get('student_id')
+        leave_id = request.data.get('leave_id')
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+
+        if not student_id or not leave_id:
+            return Response(
+                {'error': 'student_id and leave_id are required.'},
+                status=400,
+            )
+
+        try:
+            leave = GeofenceLeaveRequest.objects.select_related(
+                'student__user'
+            ).get(id=leave_id, student__user_id=student_id)
+        except GeofenceLeaveRequest.DoesNotExist:
+            return Response({'error': 'Leave request not found'}, status=404)
+
+        if leave.status != 'approved' or leave.returned_at is not None:
+            return Response(
+                {'error': 'This leave request is no longer active.'},
+                status=400,
+            )
+
+        if latitude is not None and longitude is not None:
+            leave.return_latitude = latitude
+            leave.return_longitude = longitude
+            # We reuse return_latitude/longitude as "current" location
+            # while the student is outside.  They get overwritten with
+            # the actual return location when the student comes back.
+            leave.save(update_fields=['return_latitude', 'return_longitude'])
+
+        return Response({'status': 'ok'})
+
+
+class ReturnToGeofenceAPIView(APIView):
+    """
+    Student confirms they are back within the activity geofence.
+
+    POST { student_id, leave_id, latitude, longitude }
+
+    Validates the student is actually within the session radius, then
+    marks the leave as returned.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        student_id = request.data.get('student_id')
+        leave_id = request.data.get('leave_id')
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+
+        if not student_id or not leave_id:
+            return Response(
+                {'error': 'student_id and leave_id are required.'},
+                status=400,
+            )
+
+        try:
+            leave = GeofenceLeaveRequest.objects.select_related(
+                'session', 'student__user'
+            ).get(id=leave_id, student__user_id=student_id)
+        except GeofenceLeaveRequest.DoesNotExist:
+            return Response({'error': 'Leave request not found'}, status=404)
+
+        if leave.status != 'approved' or leave.returned_at is not None:
+            return Response(
+                {'error': 'This leave request is no longer active.'},
+                status=400,
+            )
+
+        if latitude is None or longitude is None:
+            return Response(
+                {'error': 'latitude and longitude are required.'},
+                status=400,
+            )
+
+        # Validate the student is actually within the geofence.
+        distance = geodesic(
+            (float(latitude), float(longitude)),
+            (
+                float(leave.session.target_latitude),
+                float(leave.session.target_longitude),
+            ),
+        ).meters
+
+        if distance > leave.session.radius_meters:
+            return Response(
+                {
+                    'error': (
+                        f'You are still {distance:.0f}m from the activity site. '
+                        'Please return to the area first.'
+                    ),
+                    'distance': round(distance, 1),
+                },
+                status=400,
+            )
+
+        now = timezone.now()
+        leave.returned_at = now
+        leave.return_latitude = latitude
+        leave.return_longitude = longitude
+
+        # If before the deadline, mark as returned; otherwise the expiry
+        # dispatcher may have already marked it deserted.
+        if leave.status == 'approved':
+            leave.status = 'returned'
+
+        leave.save(update_fields=[
+            'returned_at', 'return_latitude', 'return_longitude', 'status',
+        ])
+
+        serializer = GeofenceLeaveRequestSerializer(
+            leave, context={'request': request}
+        )
+        return Response(
+            {
+                'message': 'Welcome back! Your return has been recorded.',
+                'leave': serializer.data,
+            },
+        )
+
+
+class LeaveStatusAPIView(APIView):
+    """
+    Student polls the current leave status and timer.
+
+    GET ?student_id=<id>&session_id=<id>
+
+    Returns the most recent leave request for this student + session so the
+    app can show the countdown and status.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        student_id = request.query_params.get('student_id')
+        session_id = request.query_params.get('session_id')
+
+        if not student_id or not session_id:
+            return Response(
+                {'error': 'student_id and session_id are required.'},
+                status=400,
+            )
+
+        try:
+            profile = StudentProfile.objects.get(user_id=student_id)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=404)
+
+        leave = (
+            GeofenceLeaveRequest.objects
+            .filter(student=profile, session_id=session_id)
+            .select_related('session__instructor', 'student__user')
+            .order_by('-requested_at')
+            .first()
+        )
+
+        if not leave:
+            return Response({'leave': None})
+
+        serializer = GeofenceLeaveRequestSerializer(
+            leave, context={'request': request}
+        )
+        return Response({'leave': serializer.data})
+
+
+class PendingLeavesAPIView(APIView):
+    """
+    Instructor sees pending leave requests for their sessions today.
+
+    GET ?instructor_id=<id>
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        instructor_id = request.query_params.get('instructor_id')
+        if not instructor_id:
+            return Response(
+                {'error': 'instructor_id is required'}, status=400
+            )
+
+        today = timezone.now().date()
+        leaves = (
+            GeofenceLeaveRequest.objects
+            .filter(
+                session__instructor_id=instructor_id,
+                session__date_time__date=today,
+            )
+            .select_related('session__instructor', 'student__user')
+            .order_by('-requested_at')
+        )
+
+        status_filter = (request.query_params.get('status') or 'all').lower()
+        if status_filter != 'all':
+            leaves = leaves.filter(status=status_filter)
+
+        serializer = GeofenceLeaveRequestSerializer(
+            leaves, many=True, context={'request': request}
+        )
+        return Response({
+            'pending_count': GeofenceLeaveRequest.objects.filter(
+                session__instructor_id=instructor_id,
+                session__date_time__date=today,
+                status='pending',
+            ).count(),
+            'leaves': serializer.data,
+        })
+
+
+class ReviewLeaveAPIView(APIView):
+    """
+    Instructor approves or rejects one leave request.
+
+    PATCH { instructor_id, decision: 'approve'|'reject', response_note? }
+    """
+
+    permission_classes = [AllowAny]
+
+    def patch(self, request, pk):
+        instructor_id = request.data.get('instructor_id')
+        decision = str(request.data.get('decision') or '').strip().lower()
+        note = str(request.data.get('response_note') or '').strip()
+
+        if not instructor_id:
+            return Response(
+                {'error': 'instructor_id is required'}, status=400
+            )
+
+        if decision not in ('approve', 'reject'):
+            return Response(
+                {'error': "decision must be either 'approve' or 'reject'."},
+                status=400,
+            )
+
+        try:
+            leave = GeofenceLeaveRequest.objects.select_related(
+                'session__instructor', 'student__user'
+            ).get(pk=pk)
+        except GeofenceLeaveRequest.DoesNotExist:
+            return Response({'error': 'Leave request not found'}, status=404)
+
+        if str(leave.session.instructor_id) != str(instructor_id):
+            return Response(
+                {'error': 'Only the instructor who owns this activity can review it.'},
+                status=403,
+            )
+
+        if leave.status != 'pending':
+            return Response(
+                {
+                    'error': f'This leave request was already {leave.status}.',
+                    'status': leave.status,
+                },
+                status=409,
+            )
+
+        try:
+            reviewer = User.objects.get(id=instructor_id)
+        except (User.DoesNotExist, ValueError):
+            return Response(
+                {'error': 'Instructor account not found.'}, status=404
+            )
+
+        if decision == 'approve':
+            leave.status = 'approved'
+            leave.deadline = timezone.now() + datetime.timedelta(
+                minutes=GeofenceLeaveRequest.LEAVE_DURATION_MINUTES
+            )
+        else:
+            leave.status = 'rejected'
+
+        leave.response_note = note or None
+        leave.reviewed_by = reviewer
+        leave.reviewed_at = timezone.now()
+        leave.save(update_fields=[
+            'status', 'deadline', 'response_note', 'reviewed_by', 'reviewed_at',
+        ])
+
+        try:
+            send_leave_reviewed(leave)
+        except Exception as push_err:
+            print(f"Leave review push failed: {push_err}")
+
+        serializer = GeofenceLeaveRequestSerializer(
+            leave, context={'request': request}
+        )
+        return Response({
+            'message': f'Leave request {leave.status}. The student has been notified.',
+            'leave': serializer.data,
+        })
+
+
+class UpcomingSessionsForStudentAPIView(APIView):
+    """
+    Sessions from the student's enrolled classes that have not started yet.
+
+    Excludes sessions the student has already filed an excuse for, so the
+    "File an Excuse" screen only offers sessions that still need a letter.
+
+    GET ?student_id=<id>
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        student_id = request.query_params.get('student_id')
+        if not student_id:
+            return Response({'error': 'student_id is required'}, status=400)
+
+        try:
+            profile = StudentProfile.objects.get(user_id=student_id)
+        except StudentProfile.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=404)
+
+        enrollments = ClassEnrollment.objects.filter(
+            student=profile, status='active'
+        ).select_related('class_group')
+
+        if not enrollments:
+            return Response({'sessions': []})
+
+        class_ids = list(enrollments.values_list('class_group_id', flat=True))
+
+        now = timezone.now()
+
+        sessions = (
+            AttendanceSession.objects
+            .filter(class_group_id__in=class_ids, date_time__gt=now)
+            .select_related('class_group')
+            .order_by('date_time')
+        )
+
+        # Exclude sessions that already have an excuse filed (pending or decided).
+        excused_session_ids = set(
+            AttendanceExcuse.objects
+            .filter(student=profile, session__in=sessions)
+            .values_list('session_id', flat=True)
+        )
+
+        rows = []
+        for session in sessions:
+            if session.id in excused_session_ids:
+                continue
+            rows.append({
+                'session_id': session.id,
+                'title': session.title,
+                'class_name': session.class_group.name if session.class_group else 'Unassigned',
+                'date_time': timezone.localtime(session.date_time).strftime('%m/%d/%Y'),
+                'start_time': timezone.localtime(session.date_time).strftime('%I:%M %p'),
+            })
+
+        return Response({'sessions': rows})
 
 

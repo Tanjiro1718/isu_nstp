@@ -377,6 +377,33 @@ class _ClassAttendanceRecordsScreenState
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Text('$studentId • $status'),
+        // Show the check-in time at a glance on the collapsed card.
+        trailing: attended && timeIn.isNotEmpty
+            ? Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.schedule, size: 14, color: Colors.green.shade800),
+                    const SizedBox(width: 4),
+                    Text(
+                      'In: $timeIn',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green.shade800,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : null,
         children: [
           Padding(
             padding: const EdgeInsets.all(12),

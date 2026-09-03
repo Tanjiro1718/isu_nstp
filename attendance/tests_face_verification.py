@@ -7,6 +7,7 @@ missing result still records the check-in, just flagged for instructor review.
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -21,6 +22,8 @@ from .models import (
     StudentProfile,
     User,
 )
+
+from .fcm_utils import send_check_in_notification
 
 
 class FaceVerificationCheckInTestBase(TestCase):
@@ -154,3 +157,33 @@ class FaceVerifiedFlagTests(FaceVerificationCheckInTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(self._record().selfie_verified)
         self.assertIsNone(self._record().face_similarity)
+
+
+class InstructorCheckInNotificationTests(FaceVerificationCheckInTestBase):
+    def test_check_in_notifies_the_owning_instructor(self):
+        """A successful time-in triggers a push to the session's instructor."""
+        with patch(
+            'attendance.views.send_check_in_notification'
+        ) as mock_send:
+            response = self._check_in()
+            self.assertEqual(response.status_code, 200)
+            mock_send.assert_called_once()
+
+            record = self._record()
+            mock_send.assert_called_once_with(record)
+
+    def test_check_in_push_skipped_without_instructor_token(self):
+        """No device token on the instructor means the push is skipped safely."""
+        self.instructor.fcm_token = ''
+        self.instructor.save(update_fields=['fcm_token'])
+
+        self.assertIsNone(self.instructor.push_token)
+        with patch(
+            'attendance.views.send_check_in_notification',
+            wraps=send_check_in_notification,
+        ):
+            response = self._check_in()
+            self.assertEqual(response.status_code, 200)
+
+        # The helper returns False (skips) when the instructor has no token.
+        self.assertFalse(send_check_in_notification(self._record()))

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
+import '../../services/notification_service.dart';
 import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
 import '../../widgets/lazy_tab_view.dart';
@@ -41,6 +42,25 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
   void initState() {
     super.initState();
     _loadProfileLockState();
+    // Tapping a "student checked in" push jumps straight to the Monitor tab.
+    instructorNavRequests.addListener(_onNavRequest);
+    _onNavRequest();
+  }
+
+  /// Reacts to instructor navigation intents (e.g. a check-in push tap) by
+  /// switching tabs, then swallows the request so it cannot fire again.
+  void _onNavRequest() {
+    final request = instructorNavRequests.value;
+    if (request == null || request.tabIndex == _currentIndex) return;
+    instructorNavRequests.value = null;
+    if (!mounted) return;
+    setState(() => _currentIndex = request.tabIndex);
+  }
+
+  @override
+  void dispose() {
+    instructorNavRequests.removeListener(_onNavRequest);
+    super.dispose();
   }
 
   Future<void> _loadProfileLockState() async {

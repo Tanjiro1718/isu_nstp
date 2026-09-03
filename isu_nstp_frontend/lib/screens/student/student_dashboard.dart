@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
@@ -12,6 +14,8 @@ import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
 import 'attendance_history_screen.dart';
 import 'student_checkin_screen.dart';
+import 'file_excuse_screen.dart';
+import 'presence_check_photo_screen.dart';
 
 class StudentDashboard extends StatefulWidget {
   final UserModel user;
@@ -49,6 +53,17 @@ class _StudentDashboardState extends State<StudentDashboard> {
   bool _isRespondingToCheck = false;
   bool _isCheckingOut = false;
 
+  // --- Geofence leave request state ---
+  Map<String, dynamic>? _activeLeave;
+  Timer? _leaveCountdownTimer;
+  Timer? _leaveLocationPoller;
+  int _leaveSecondsRemaining = 0;
+  bool _isRequestingLeave = false;
+  bool _isReturning = false;
+
+  // --- Excuse letters state ---
+  int _pendingExcuseCount = 0;
+
   /// Owned by this State rather than by the dialog: disposing it as soon as
   /// showDialog() returns kills it while the dialog is still animating out,
   /// and the TextField then rebuilds against a disposed controller.
@@ -68,6 +83,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
     _loadMyClasses();
     _startPresencePolling();
     _loadProfileLockState();
+    _loadPendingExcuseCount();
   }
 
   /// Reads the saved preference and checks whether this device can actually
@@ -152,9 +168,13 @@ class _StudentDashboardState extends State<StudentDashboard> {
   /// prompt even if the push notification is delayed or was swiped away.
   void _startPresencePolling() {
     _refreshPresence();
+    _refreshLeaveStatus();
     _presencePoller = Timer.periodic(
       const Duration(seconds: 20),
-      (_) => _refreshPresence(),
+      (_) {
+        _refreshPresence();
+        _refreshLeaveStatus();
+      },
     );
   }
 
@@ -171,9 +191,33 @@ class _StudentDashboardState extends State<StudentDashboard> {
     if (checkId == null) return;
 
     setState(() => _isRespondingToCheck = true);
+
+    // A live front-camera selfie is mandatory proof for every presence check.
+    File? selfie;
+    try {
+      selfie = await Navigator.push<dynamic>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const PresenceCheckPhotoScreen(),
+        ),
+      );
+    } catch (_) {
+      selfie = null;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    if (selfie == null) {
+      setState(() => _isRespondingToCheck = false);
+      return; // Student backed out / camera unavailable.
+    }
+
     final result = await PresenceService.respondToCheck(
       checkId: checkId,
       studentUserId: _currentUser.id,
+      selfie: selfie,
     );
 
     if (!mounted) return;
@@ -198,9 +242,342 @@ class _StudentDashboardState extends State<StudentDashboard> {
     await _refreshPresence();
   }
 
+  // ------------------------------------------------------------------
+  // Geofence leave request helpers
+  // ------------------------------------------------------------------
+
+  void _startLeaveCountdown() {
+    _leaveCountdownTimer?.cancel();
+    void tick() {
+      if (_activeLeave == null || !mounted) return;
+      final deadline = DateTime.tryParse('${_activeLeave!['deadline']}');
+      if (deadline == null) return;
+      final remaining = deadline.difference(DateTime.now()).inSeconds;
+      if (!mounted) return;
+      setState(() {
+        _leaveSecondsRemaining = remaining > 0 ? remaining : 0;
+      });
+      if (remaining <= 0) {
+        _leaveCountdownTimer?.cancel();
+      }
+    }
+
+    tick();
+    _leaveCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) => tick());
+  }
+
+  void _startLeaveLocationTracking() {
+    _leaveLocationPoller?.cancel();
+    _leaveLocationPoller = Timer.periodic(const Duration(seconds: 10), (_) {
+      _sendLeaveLocationUpdate();
+    });
+    // Send immediately.
+    _sendLeaveLocationUpdate();
+  }
+
+  Future<void> _sendLeaveLocationUpdate() async {
+    final leave = _activeLeave;
+    if (leave == null) return;
+    final leaveId = leave['id'];
+    if (leaveId == null) return;
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      await http.post(
+        Uri.parse(ApiConfig.leaveLocationUpdateUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: jsonEncode({
+          'student_id': _currentUser.id,
+          'leave_id': leaveId,
+          'latitude': position.latitude.toString(),
+          'longitude': position.longitude.toString(),
+        }),
+      );
+    } catch (_) {
+      // Location update failure should not block the student.
+    }
+  }
+
+  Future<void> _showLeaveReasonDialog() async {
+    final reasonController = TextEditingController();
+    bool submitting = false;
+
+    final reason = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.directions_walk, color: Colors.orange, size: 28),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Request to Leave',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.timer, size: 18, color: Colors.orange.shade800),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'You will have 15 minutes to return to the activity area.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.orange.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: reasonController,
+                enabled: !submitting,
+                maxLines: 3,
+                maxLength: 500,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(
+                  labelText: 'Reason for leaving',
+                  hintText: 'Explain why you need to leave temporarily',
+                  hintStyle: const TextStyle(fontSize: 12),
+                  alignLabelWithHint: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting
+                  ? null
+                  : () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: submitting
+                  ? null
+                  : () {
+                      final text = reasonController.text.trim();
+                      if (text.length < 5) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Please enter a reason (at least 5 characters).'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                        return;
+                      }
+                      Navigator.pop(dialogContext, text);
+                    },
+              style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade800),
+              child: submitting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Request to Leave'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (reason == null || reason.isEmpty || !mounted) return;
+    await _submitLeaveRequest(reason);
+  }
+
+  Future<void> _submitLeaveRequest(String reason) async {
+    if (_presence?.recordId == null) return;
+
+    setState(() => _isRequestingLeave = true);
+
+    try {
+      // Find the session ID from the presence status.
+      final sessionId = _presence?.sessionId;
+      if (sessionId == null) {
+        _showSnackBar('Could not identify the active session.', Colors.red);
+        return;
+      }
+
+      final response = await http.post(
+        Uri.parse(ApiConfig.requestLeaveUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: jsonEncode({
+          'student_id': _currentUser.id,
+          'session_id': sessionId,
+          'reason': reason,
+        }),
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        setState(() {
+          _activeLeave = body['leave'];
+          _isRequestingLeave = false;
+        });
+        _startLeaveCountdown();
+        _startLeaveLocationTracking();
+        _showSnackBar(
+          body['message']?.toString() ?? 'Leave approved. You have 15 minutes to return.',
+          Colors.green,
+        );
+      } else {
+        String message = 'Could not submit leave request.';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map && decoded['error'] != null) {
+            message = decoded['error'].toString();
+          }
+        } catch (_) {}
+        setState(() => _isRequestingLeave = false);
+        _showSnackBar(message, Colors.red);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isRequestingLeave = false);
+      _showSnackBar('Network error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _returnToGeofence() async {
+    final leave = _activeLeave;
+    if (leave == null) return;
+
+    setState(() => _isReturning = true);
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final response = await http.post(
+        Uri.parse(ApiConfig.returnToGeofenceUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: jsonEncode({
+          'student_id': _currentUser.id,
+          'leave_id': leave['id'],
+          'latitude': position.latitude.toString(),
+          'longitude': position.longitude.toString(),
+        }),
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        setState(() {
+          _activeLeave = null;
+          _leaveSecondsRemaining = 0;
+          _isReturning = false;
+        });
+        _leaveCountdownTimer?.cancel();
+        _leaveLocationPoller?.cancel();
+        _showSnackBar(
+          body['message']?.toString() ?? 'Welcome back!',
+          Colors.green,
+        );
+      } else {
+        String message = 'Could not confirm your return.';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map && decoded['error'] != null) {
+            message = decoded['error'].toString();
+          }
+        } catch (_) {}
+        setState(() => _isReturning = false);
+        _showSnackBar(message, Colors.red);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isReturning = false);
+      _showSnackBar('Network error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _refreshLeaveStatus() async {
+    final sessionId = _presence?.sessionId;
+    if (sessionId == null) return;
+
+    try {
+      final response = await http.get(
+        Uri.parse(ApiConfig.leaveStatusUrl(_currentUser.id, sessionId)),
+        headers: {'ngrok-skip-browser-warning': 'true'},
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final body = jsonDecode(response.body);
+        final leave = body['leave'];
+        if (leave != null && leave['status'] == 'approved' && leave['returned_at'] == null) {
+          setState(() => _activeLeave = leave);
+          _startLeaveCountdown();
+          _startLeaveLocationTracking();
+        } else if (_activeLeave != null) {
+          // Leave ended (returned, rejected, or deserted).
+          setState(() {
+            _activeLeave = null;
+            _leaveSecondsRemaining = 0;
+          });
+          _leaveCountdownTimer?.cancel();
+          _leaveLocationPoller?.cancel();
+          if (leave != null && leave['status'] == 'deserted') {
+            _showSnackBar(
+              'Your leave time expired. Please see your instructor.',
+              Colors.red,
+            );
+          } else if (leave != null && leave['status'] == 'rejected') {
+            _showSnackBar(
+              'Your leave request was not approved.',
+              Colors.red,
+            );
+          }
+        }
+      }
+    } catch (_) {
+      // Polling failure should not disrupt the UI.
+    }
+  }
+
   @override
   void dispose() {
     _presencePoller?.cancel();
+    _leaveCountdownTimer?.cancel();
+    _leaveLocationPoller?.cancel();
     _joinCodeController.dispose();
     super.dispose();
   }
@@ -581,12 +958,13 @@ class _StudentDashboardState extends State<StudentDashboard> {
     );
   }
 
-  /// Home: the greeting, the live presence banner, and the check-in action.
+  /// Home: the greeting, the live presence banner, and the quick actions.
   Widget _buildHomeTab() {
     return RefreshIndicator(
       onRefresh: () async {
         await _loadMyClasses();
         await _refreshPresence();
+        await _loadPendingExcuseCount();
       },
       color: isuGreen,
       child: ListView(
@@ -619,9 +997,60 @@ class _StudentDashboardState extends State<StudentDashboard> {
             iconColor: isuGreen,
             onTap: _isOpeningCheckIn ? null : _openCurrentSessionCheckIn,
           ),
+          const SizedBox(height: 12),
+
+          // File an excuse for an upcoming session.
+          _buildDashboardCard(
+            context,
+            title: _pendingExcuseCount > 0
+                ? 'File an Excuse ($_pendingExcuseCount pending)'
+                : 'File an Excuse',
+            subtitle: 'Can\'t attend an upcoming session? Submit an excuse letter',
+            icon: Icons.drafts_outlined,
+            iconColor: Colors.blueAccent,
+            onTap: () => _openFileExcuseScreen(),
+          ),
         ],
       ),
     );
+  }
+
+  /// Opens the "File an Excuse" screen for upcoming sessions.
+  Future<void> _openFileExcuseScreen() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            FileExcuseScreen(user: _currentUser),
+      ),
+    );
+    await _loadPendingExcuseCount();
+  }
+
+  /// Loads the count of the student's pending excuses to show on the card.
+  Future<void> _loadPendingExcuseCount() async {
+    try {
+      final response = await http.get(
+        Uri.parse(ApiConfig.myExcusesUrl(_currentUser.id)),
+        headers: {'ngrok-skip-browser-warning': 'true'},
+      );
+      if (response.statusCode == 200 && mounted) {
+        final body = jsonDecode(response.body);
+        List excuses = [];
+        if (body is List) {
+          excuses = body;
+        } else if (body is Map) {
+          final e = body['excuses'] ?? body['results'];
+          if (e is List) excuses = e;
+        }
+        final pending = excuses
+            .where((e) => e is Map && (e['status'] ?? '') == 'pending')
+            .length;
+        setState(() => _pendingExcuseCount = pending);
+      }
+    } catch (_) {
+      // Non-critical; keep whatever we had.
+    }
   }
 
   /// Classes: everything the student has joined, plus the join-by-code action.
@@ -778,7 +1207,12 @@ class _StudentDashboardState extends State<StudentDashboard> {
       );
     }
 
-    // 4. Activity in progress: show a warning if they already missed one.
+    // 4. ACTIVE LEAVE: student is outside the geofence.
+    if (_activeLeave != null) {
+      return _buildActiveLeaveCard();
+    }
+
+    // 5. Activity in progress: show a warning if they already missed one.
     final warned = presence.isWarned;
     // Timed in and verified, but the instructor has not released time-out yet.
     final onStandby = !presence.checkOutOpen;
@@ -861,6 +1295,30 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 ],
               ),
             ),
+
+            // Request to Leave button
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isRequestingLeave ? null : _showLeaveReasonDialog,
+                icon: _isRequestingLeave
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.directions_walk),
+                label: Text(
+                  _isRequestingLeave ? 'Submitting...' : 'Request to Leave for a While',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.orange.shade800,
+                  side: BorderSide(color: Colors.orange.shade400),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
           ],
 
           const SizedBox(height: 12),
@@ -883,6 +1341,163 @@ class _StudentDashboardState extends State<StudentDashboard> {
                     : onStandby
                         ? 'Time Out locked'
                         : 'Time Out',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The active leave card: countdown timer, GPS indicator, and "I'm Back" button.
+  Widget _buildActiveLeaveCard() {
+    final minutes = _leaveSecondsRemaining ~/ 60;
+    final seconds = _leaveSecondsRemaining % 60;
+    final timeDisplay =
+        '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    final isExpired = _leaveSecondsRemaining <= 0;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isExpired ? Colors.red.shade50 : Colors.blue.shade50,
+        border: Border.all(
+          color: isExpired ? Colors.red.shade400 : Colors.blue.shade300,
+          width: 2,
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isExpired ? Icons.timer_off : Icons.directions_walk,
+                color: isExpired ? Colors.red.shade700 : Colors.blue.shade700,
+                size: 28,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isExpired ? 'Leave time expired' : 'Temporarily outside the area',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: isExpired ? Colors.red.shade900 : Colors.blue.shade900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            isExpired
+                ? 'Your 15-minute leave has expired. Please return to the activity area immediately and see your instructor.'
+                : 'Your instructor has been notified. You must return to the activity area before the timer runs out.',
+            style: const TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+
+          // Countdown timer
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            decoration: BoxDecoration(
+              color: isExpired
+                  ? Colors.red.shade100
+                  : (_leaveSecondsRemaining < 300
+                      ? Colors.orange.shade100
+                      : Colors.white),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isExpired
+                    ? Colors.red.shade300
+                    : (_leaveSecondsRemaining < 300
+                        ? Colors.orange.shade300
+                        : Colors.grey.shade300),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.timer,
+                  size: 20,
+                  color: isExpired
+                      ? Colors.red.shade700
+                      : (_leaveSecondsRemaining < 300
+                          ? Colors.orange.shade700
+                          : Colors.blue.shade700),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  timeDisplay,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: isExpired
+                        ? Colors.red.shade700
+                        : (_leaveSecondsRemaining < 300
+                            ? Colors.orange.shade700
+                            : Colors.blue.shade700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          if (isExpired) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber, size: 18, color: Colors.red.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'You did not return on time. This has been reported to your instructor.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red.shade900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _isReturning ? null : _returnToGeofence,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.green.shade700,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              icon: _isReturning
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.login),
+              label: Text(
+                _isReturning ? 'Confirming return...' : "I'm Back",
               ),
             ),
           ),

@@ -106,35 +106,45 @@ class PresenceService {
   }
 
   /// Confirms the student is still inside the geofence.
+  ///
+  /// A live front-camera [selfie] is mandatory proof for every presence check.
   static Future<PresenceActionResult> respondToCheck({
     required int checkId,
     required int studentUserId,
+    required File selfie,
   }) async {
     try {
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      final response = await http.post(
+      final request = http.MultipartRequest(
+        'POST',
         Uri.parse(ApiConfig.presenceRespondUrl),
-        body: {
-          'check_id': checkId.toString(),
-          'student_id': studentUserId.toString(),
-          'latitude': position.latitude.toString(),
-          'longitude': position.longitude.toString(),
-        },
-      ).timeout(const Duration(seconds: 20));
+      );
+      request.fields['check_id'] = checkId.toString();
+      request.fields['student_id'] = studentUserId.toString();
+      request.fields['latitude'] = position.latitude.toString();
+      request.fields['longitude'] = position.longitude.toString();
+      request.files.add(
+        await http.MultipartFile.fromPath('response_photo', selfie.path),
+      );
 
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-      if (response.statusCode == 200) {
+      final streamed = await request.send().timeout(
+            const Duration(seconds: 30),
+          );
+      final body = await streamed.stream.bytesToString();
+      final decoded = jsonDecode(body) as Map<String, dynamic>;
+
+      if (streamed.statusCode == 200) {
         return PresenceActionResult(
           true,
-          body['message'] as String? ?? 'Presence confirmed.',
+          decoded['message'] as String? ?? 'Presence confirmed.',
         );
       }
       return PresenceActionResult(
         false,
-        body['error'] as String? ?? 'Could not confirm your presence.',
+        decoded['error'] as String? ?? 'Could not confirm your presence.',
       );
     } catch (e) {
       return PresenceActionResult(false, 'Could not confirm presence: $e');

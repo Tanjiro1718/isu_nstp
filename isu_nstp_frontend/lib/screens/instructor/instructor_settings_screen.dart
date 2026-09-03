@@ -47,6 +47,10 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
   // How far ahead of the start the class gets the heads-up push.
   int _reminderMinutes = 5;
 
+  // What the class will actually do. Cleaning keeps the random presence
+  // pings; lecturing turns them off and relies on check-in/time-out only.
+  _SessionType _sessionType = _SessionType.cleaning;
+
   // The class this geofence session belongs to.
   List<ClassModel> _classes = [];
   int? _selectedClassId;
@@ -177,6 +181,9 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
             .toUtc()
             .toIso8601String(),
         'reminder_minutes': _reminderMinutes,
+        // Lecturing does check-in/time-out only, so no random presence pings.
+        'presence_check_count':
+            _sessionType == _SessionType.lecturing ? 0 : 2,
         'target_latitude': double.parse(_latController.text),
         'target_longitude': double.parse(_lngController.text),
         'radius_meters': int.parse(_radiusController.text),
@@ -300,6 +307,48 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
           ],
           onChanged: (val) => setState(() => _reminderMinutes = val ?? 5),
         ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<_SessionType>(
+          initialValue: _sessionType,
+          decoration: const InputDecoration(
+            labelText: 'Session type',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.category_outlined),
+          ),
+          items: const [
+            DropdownMenuItem(
+              value: _SessionType.cleaning,
+              child: Text('Cleaning - presence checks on'),
+            ),
+            DropdownMenuItem(
+              value: _SessionType.lecturing,
+              child: Text('Lecturing - check-in & time-out only'),
+            ),
+          ],
+          onChanged: (val) => setState(() => _sessionType = val ?? _SessionType.cleaning),
+          selectedItemBuilder: (context) => const [
+            Text('Cleaning'),
+            Text('Lecturing'),
+          ],
+        ),
+        if (_sessionType == _SessionType.lecturing)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Icon(Icons.info_outline, size: 18, color: Colors.orange),
+                SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'No random presence checks for this session. Students just '
+                    'check in and check out.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -668,4 +717,12 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
             ),
     );
   }
+}
+
+/// What the class is running, which decides whether random presence checks
+/// are scheduled. Cleaning (default) keeps them; lecturing drops them and
+/// does check-in + time-out only.
+enum _SessionType {
+  cleaning,
+  lecturing,
 }
