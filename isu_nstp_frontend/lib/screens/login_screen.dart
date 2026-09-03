@@ -42,7 +42,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // --- Login Request Handler ---
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -63,7 +62,6 @@ class _LoginScreenState extends State<LoginScreen> {
           )
           .timeout(const Duration(seconds: 7));
 
-      // Guard against mounted context errors after async gap
       if (!mounted) return;
 
       setState(() => _isLoading = false);
@@ -71,27 +69,20 @@ class _LoginScreenState extends State<LoginScreen> {
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = json.decode(response.body);
 
-        // 🛡️ Safe Extraction: Handle both nested 'user' key or direct user object
         final Map<String, dynamic> userMap =
             (responseData.containsKey('user') && responseData['user'] != null)
                 ? responseData['user'] as Map<String, dynamic>
                 : responseData;
 
-        // Construct UserModel safely using null-safe constructor
         final user = UserModel.fromJson(userMap);
 
-        // Remember the session so closing the app does not sign them out.
-        // Awaited so the record is on disk before we leave this screen.
         await SessionService.saveUser(user);
         if (!mounted) return;
 
         _showSnackBar('Welcome back, ${user.username}!', isuGreen);
 
-        // Bind this device to the account so password codes and other alerts
-        // can be pushed. Fire-and-forget: a failure here must not block login.
         DeviceTokenService.register(user.id);
 
-        // Role-based Navigation Routing
         Widget destination;
         switch (user.role.toLowerCase()) {
           case 'admin':
@@ -183,7 +174,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // --- API 2: Verify code and set new password ---
   Future<bool> _confirmPasswordReset(
     String email,
     String code,
@@ -464,7 +454,6 @@ class _LoginScreenState extends State<LoginScreen> {
       },
     );
 
-    // Safe now: the dialog and its fields are gone.
     emailController.dispose();
     codeController.dispose();
     newPasswordController.dispose();
