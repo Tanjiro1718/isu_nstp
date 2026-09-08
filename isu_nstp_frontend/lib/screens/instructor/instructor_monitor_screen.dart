@@ -46,6 +46,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
   Timer? _rosterPoller;
   bool _isOpeningCheckOut = false;
   bool _showStandbyRoster = false;
+  bool _showAttendanceRecords = false;
 
   // --- Geofence leave requests ---
   List<Map<String, dynamic>> _pendingLeaves = [];
@@ -1420,98 +1421,181 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                     ],
                   ),
                   const SizedBox(height: 24),
-                  
-                  // Render the actual list of logs
-                  if (filteredLogs.isEmpty)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24.0),
-                        child: Text('No attendance records found matching your criteria.'),
-                      ),
-                    )
-                  else
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: filteredLogs.length,
-                      separatorBuilder: (context, index) => const Divider(),
-                      itemBuilder: (context, index) {
-                        final log = filteredLogs[index];
-                        
-                        // Check if the student has a selfie picture submitted
-                        final selfieUrl = log['selfie_image_url']?.toString();
-                        final hasPhoto = selfieUrl != null && selfieUrl.isNotEmpty;
-                        final studentName = log['student_name']?.toString() ?? 'Unknown Student';
-                        final checkInTime = log['time']?.toString() ?? '';
 
-                        return ListTile(
-                          // Show the time-out selfie as a tidy rounded thumbnail;
-                          // tap to view it large when one is available.
-                          leading: GestureDetector(
-                            onTap: hasPhoto
-                                ? () => _showExpandedImage(selfieUrl, studentName)
-                                : null,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(10),
-                              child: SizedBox(
-                                width: 48,
-                                height: 48,
-                                child: hasPhoto
-                                    ? Image.network(
-                                        selfieUrl,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, _) =>
-                                            _buildNoPhotoPlaceholder(),
-                                      )
-                                    : _buildNoPhotoPlaceholder(),
+                  Card(
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InkWell(
+                            borderRadius: BorderRadius.circular(8),
+                            onTap: () => setState(
+                                () => _showAttendanceRecords = !_showAttendanceRecords),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 8, horizontal: 4),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.assignment_ind,
+                                      size: 20, color: Colors.blue.shade700),
+                                  const SizedBox(width: 8),
+                                  const Expanded(
+                                    child: Text(
+                                      'Attendance Records',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.shade50,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                          color: Colors.blue.shade200),
+                                    ),
+                                    child: Text(
+                                      '${filteredLogs.length}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.blue.shade900,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    _showAttendanceRecords
+                                        ? Icons.expand_less
+                                        : Icons.expand_more,
+                                    size: 22,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ],
                               ),
                             ),
                           ),
-                          title: Text(
-                            studentName,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          isThreeLine: true,
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${log['date'] ?? '--'} • ${log['session_title'] ?? '--'}'
-                                '${(log['department']?.toString() ?? '').isNotEmpty ? ' • ${log['department']}' : ''}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              if (checkInTime.isNotEmpty)
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.schedule,
-                                        size: 13, color: Colors.green.shade700),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Checked in $checkInTime',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.green.shade700,
+                          if (_showAttendanceRecords) ...[
+                            const Divider(height: 16),
+                            if (filteredLogs.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.all(24.0),
+                                child: Center(
+                                  child: Text(
+                                    'No attendance records found matching your criteria.',
+                                    style: TextStyle(
+                                        fontSize: 13, color: Colors.grey),
+                                  ),
+                                ),
+                              )
+                            else
+                              ListView.separated(
+                                shrinkWrap: true,
+                                physics:
+                                    const NeverScrollableScrollPhysics(),
+                                itemCount: filteredLogs.length,
+                                separatorBuilder: (context, index) =>
+                                    const Divider(),
+                                itemBuilder: (context, index) {
+                                  final log = filteredLogs[index];
+                                  final selfieUrl =
+                                      log['selfie_image_url']?.toString();
+                                  final hasPhoto = selfieUrl != null &&
+                                      selfieUrl.isNotEmpty;
+                                  final studentName =
+                                      log['student_name']?.toString() ??
+                                          'Unknown Student';
+                                  final checkInTime =
+                                      log['time']?.toString() ?? '';
+
+                                  return ListTile(
+                                    leading: GestureDetector(
+                                      onTap: hasPhoto
+                                          ? () => _showExpandedImage(
+                                              selfieUrl, studentName)
+                                          : null,
+                                      child: ClipRRect(
+                                        borderRadius:
+                                            BorderRadius.circular(10),
+                                        child: SizedBox(
+                                          width: 48,
+                                          height: 48,
+                                          child: hasPhoto
+                                              ? Image.network(
+                                                  selfieUrl,
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder: (context,
+                                                          error, _) =>
+                                                      _buildNoPhotoPlaceholder(),
+                                                )
+                                              : _buildNoPhotoPlaceholder(),
+                                        ),
                                       ),
                                     ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                          // Location icon opens just the map.
-                          trailing: IconButton(
-                            icon: const Icon(Icons.location_on,
-                                color: Colors.redAccent),
-                            tooltip: 'View Map Location',
-                            onPressed: () => _showLocationOnlyDialog(log),
-                          ),
-                          // Tapping the middle of the tile opens the full record.
-                          onTap: () => _showRecordDialog(log),
-                        );
-                      },
+                                    title: Text(
+                                      studentName,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    isThreeLine: true,
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '${log['date'] ?? '--'} • ${log['session_title'] ?? '--'}'
+                                          '${(log['department']?.toString() ?? '').isNotEmpty ? ' • ${log['department']}' : ''}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        if (checkInTime.isNotEmpty)
+                                          Row(
+                                            mainAxisSize:
+                                                MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.schedule,
+                                                  size: 13,
+                                                  color: Colors
+                                                      .green.shade700),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                'Checked in $checkInTime',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight:
+                                                      FontWeight.w600,
+                                                  color: Colors
+                                                      .green.shade700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                      ],
+                                    ),
+                                    trailing: IconButton(
+                                      icon: const Icon(
+                                          Icons.location_on,
+                                          color: Colors.redAccent),
+                                      tooltip: 'View Map Location',
+                                      onPressed: () =>
+                                          _showLocationOnlyDialog(log),
+                                    ),
+                                    onTap: () =>
+                                        _showRecordDialog(log),
+                                  );
+                                },
+                              ),
+                          ],
+                        ],
+                      ),
                     ),
+                  ),
                 ],
               ),
           ],

@@ -1,6 +1,6 @@
 {
-    "name": "isu_nstp_frontend",
-    "short_name": "isu_nstp_frontend",
+    "name": "ISU NSTP Attendance",
+    "short_name": "ISU NSTP Attendance",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
