@@ -1,0 +1,29 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+/generated/prisma
+
+# Firebase service account key (contains private keys - never commit!)
+serviceAccountKey.json
+
+# Django generated files
+*.pyc
+__pycache__/
+*.log
+build.log
+
+# Media / static uploads
+/media/
+/staticfiles/
+/django_cache/
+
+# Local virtualenv
+.venv/
+
+# Bundled OpenCV source tree (not used at runtime)
+opencv_local/
+
+# IDE files
+.vscode/
+.idea/

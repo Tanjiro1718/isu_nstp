@@ -1,0 +1,15 @@
+.venv/
+.git/
+.env
+media/
+staticfiles/
+django_cache/
+opencv_local/
+isu_nstp_frontend/
+*.pyc
+__pycache__/
+*.log
+build.log
+serviceAccountKey.json
+.vscode/
+.idea/
