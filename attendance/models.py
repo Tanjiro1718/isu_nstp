@@ -621,3 +621,40 @@ class GeofenceLeaveRequest(models.Model):
             f"[{self.status}]"
         )
 
+
+# 11. Account deletion requests (Google Play data-safety requirement)
+class AccountDeletionRequest(models.Model):
+    """
+    A user's request to have their account and associated data deleted.
+
+    Kept as a reviewable request rather than instant self-service deletion:
+    attendance records feed legitimate institutional/audit reporting, so an
+    NSTP admin confirms each deletion in the Django admin site. This matches
+    the app's existing approve-first registration flow.
+    """
+
+    STATUS_CHOICES = (
+        ('pending', 'Pending Review'),
+        ('deleted', 'Deleted'),
+        ('rejected', 'Rejected'),
+    )
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='account_deletion_requests'
+    )
+    email = models.EmailField()
+    reason = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+
+    @property
+    def is_pending(self):
+        return self.status == 'pending'
+
+    def __str__(self):
+        return f"Account deletion for {self.email} [{self.status}]"
+

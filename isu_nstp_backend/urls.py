@@ -20,7 +20,7 @@ from rest_framework.routers import DefaultRouter
 from attendance.views import UserViewSet, invite_landing_page
 from django.conf import settings
 from django.conf.urls.static import static
-from attendance.views import privacy_policy
+from attendance.views import privacy_policy, account_deletion_page
 
 
 router = DefaultRouter()
@@ -30,6 +30,8 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('attendance.urls')),
     path("privacy-policy/", privacy_policy, name="privacy_policy"),
+    # Account deletion URL required by the Google Play data-safety form.
+    path("account-deletion/", account_deletion_page, name="account_deletion"),
 
     # Shareable class invitation link (opened in a browser by students)
     path('join/<str:token>/', invite_landing_page, name='invite-landing'),

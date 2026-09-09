@@ -47,6 +47,7 @@ from .views import (
     PendingLeavesAPIView,
     ReviewLeaveAPIView,
     UpcomingSessionsForStudentAPIView,
+    RequestAccountDeletionAPIView,
 )
 
 
@@ -122,6 +123,9 @@ urlpatterns = [
 
     path('my-classes/', StudentClassListAPIView.as_view(), name='student-class-list'),
     path('my-classes/leave/', StudentLeaveClassAPIView.as_view(), name='student-class-leave'),
+
+    # 7. Self-service account deletion (Google Play data-safety requirement)
+    path('account-deletion/request/', RequestAccountDeletionAPIView.as_view(), name='api-account-deletion-request'),
 
     # 6. Router endpoints (/users/)
     path('', include(router.urls)), 

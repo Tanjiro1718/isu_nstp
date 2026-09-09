@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Deletion - ISU NSTP Attendance</title>
+    <meta
+        name="description"
+        content="Request deletion of your ISU NSTP Attendance account and associated data."
+    >
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            line-height: 1.7;
+            color: #222;
+            background: #f5f6f8;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .card {
+            background: #ffffff;
+            padding: 45px;
+            border-radius: 10px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #222;
+            font-size: 28px;
+        }
+
+        h2 {
+            margin-top: 30px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #e5e5e5;
+            color: #333;
+            font-size: 20px;
+        }
+
+        p { margin: 12px 0; }
+
+        ul { padding-left: 25px; }
+
+        li { margin-bottom: 7px; }
+
+        .notice {
+            background: #f1f5f9;
+            border-left: 4px solid #555;
+            padding: 15px 18px;
+            margin: 20px 0;
+        }
+
+        .form-group { margin: 18px 0; }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 6px;
+            color: #333;
+        }
+
+        input[type="email"],
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 15px;
+            font-family: inherit;
+        }
+
+        textarea { min-height: 90px; }
+
+        button {
+            background: #d32f2f;
+            color: #fff;
+            border: none;
+            padding: 13px 24px;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        button:hover { background: #b71c1c; }
+
+        .alert {
+            padding: 14px 18px;
+            border-radius: 6px;
+            margin: 18px 0;
+            font-size: 14px;
+        }
+
+        .alert-success {
+            background: #e8f5e9;
+            border: 1px solid #66bb6a;
+            color: #1b5e20;
+        }
+
+        .alert-error {
+            background: #fdecea;
+            border: 1px solid #ef9a9a;
+            color: #b71c1c;
+        }
+
+        a { color: #1457a6; text-decoration: none; }
+
+        footer {
+            margin-top: 30px;
+            padding-top: 18px;
+            border-top: 1px solid #ddd;
+            color: #777;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        @media (max-width: 600px) {
+            .card { padding: 25px 20px; }
+            h1 { font-size: 24px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <main class="card">
+
+        <h1>Account Deletion</h1>
+
+        <p>
+            If you no longer want to use the ISU NSTP Attendance app, you may
+            request the deletion of your account and the personal data
+            associated with it.
+        </p>
+
+        <div class="notice">
+            <strong>What happens next:</strong> your request is sent to an NSTP
+            administrator for review. Once your request is confirmed, your
+            account and the data associated with it will be deleted. Attendance
+            records that must be kept for institutional or legal reasons may be
+            retained in anonymized form. You will be notified by email once your
+            account has been deleted.
+        </div>
+
+        {% if success %}
+        <div class="alert alert-success">{{ success }}</div>
+        {% endif %}
+
+        {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
+
+        {% if not success %}
+        <h2>Request Account Deletion</h2>
+
+        <form method="post" action="">
+            {% csrf_token %}
+
+            <div class="form-group">
+                <label for="email">Registered Email Address</label>
+                <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    placeholder="you@isu.edu.ph"
+                    required
+                    autocomplete="email"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="reason">Reason (optional)</label>
+                <textarea
+                    id="reason"
+                    name="reason"
+                    placeholder="Any details you would like to share about your request."
+                ></textarea>
+            </div>
+
+            <button type="submit">Submit Deletion Request</button>
+        </form>
+
+        <p style="font-size: 14px; color: #666; margin-top: 22px;">
+            Prefer not to use this form? You can also request deletion from
+            within the app: <strong>Profile &rarr; Delete Account</strong>.
+            For further assistance, please contact the NSTP office.
+        </p>
+        {% endif %}
+
+        <footer>
+            ISU NSTP Attendance — Isabela State University
+        </footer>
+
+    </main>
+</div>
+
+</body>
+</html>

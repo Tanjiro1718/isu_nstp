@@ -20,6 +20,7 @@ from .models import (
     ClassEnrollment,
     PresenceCheck,
     PasswordResetCode,
+    AccountDeletionRequest,
 )
 from .serializers import (
     UserSerializer,
@@ -65,7 +66,7 @@ from rest_framework.permissions import IsAuthenticated
 User = get_user_model()
 
 def privacy_policy(request):
-    return render(request, "privacy_policy.html")
+    return render(request, "attendance/privacy_policy.html")
 
 def generate_otp():
     """Helper function to generate a random 6-digit OTP code."""
@@ -3505,5 +3506,157 @@ class UpcomingSessionsForStudentAPIView(APIView):
             })
 
         return Response({'sessions': rows})
+
+class RequestAccountDeletionAPIView(APIView):
+    """
+    In-app account deletion request (Profile screen).
+
+    Matches the app's existing proof pattern (user_id + password + email, no
+    bearer tokens) so every role can submit. Creates a pending
+    AccountDeletionRequest that an NSTP admin processes in /admin/, preserving
+    institutional attendance records until a human confirms the deletion.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        password = request.data.get('password') or ''
+        email = str(request.data.get('email') or '').strip().lower()
+        reason = request.data.get('reason', '').strip()
+
+        if not user_id or not password or not email:
+            return Response(
+                {'detail': 'user_id, password, and email are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Same proof the change-password flow requires.
+        if not user.check_password(password):
+            return Response(
+                {'detail': 'Incorrect password. Your request was not submitted.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (user.email or '').strip().lower() != email:
+            return Response(
+                {'detail': 'That email does not match the one on your account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # One live request per user - a new one retires the old.
+        AccountDeletionRequest.objects.filter(
+            user=user, status='pending'
+        ).delete()
+
+        AccountDeletionRequest.objects.create(
+            user=user,
+            email=user.email,
+            reason=reason,
+        )
+
+        # Notify the user their request was received.
+        try:
+            msg = EmailMultiAlternatives(
+                'Account deletion request received - ISU NSTP Attendance',
+                (
+                    f"Hello {user.get_full_name() or user.username},\n\n"
+                    f"We received your request to delete your ISU NSTP Attendance "
+                    f"account and the data associated with it.\n\n"
+                    f"Your request is now pending review by an NSTP administrator. "
+                    f"You will receive another email once it has been processed.\n\n"
+                    f"If you did not submit this request, please contact the NSTP "
+                    f"office immediately.\n\n"
+                    f"- ISU NSTP Support"
+                ),
+                getattr(settings, 'DEFAULT_FROM_EMAIL'),
+                [user.email],
+            )
+            msg.send()
+        except Exception as email_err:
+            print(f"❌ Failed to send deletion ack email to {user.email}: {email_err}")
+
+        return Response(
+            {
+                'message': (
+                    'Your account deletion request has been submitted. '
+                    'An NSTP administrator will process it and you will be '
+                    'notified once your account is deleted.'
+                ),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+def account_deletion_page(request):
+    """
+    Web page required by the Google Play data-safety declaration.
+
+    Lets any user request account deletion without the app installed. The form
+    verifies the email belongs to an existing account, then creates a pending
+    AccountDeletionRequest for an NSTP admin to process.
+    """
+    if request.method == 'POST':
+        email = (request.POST.get('email') or '').strip().lower()
+        reason = (request.POST.get('reason') or '').strip()
+
+        if not email:
+            return render(request, 'attendance/account_deletion.html', {
+                'error': 'Please enter the email address registered to your account.',
+            })
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            # Neutral wording - do not leak which emails have accounts.
+            return render(request, 'attendance/account_deletion.html', {
+                'success': (
+                    'If that email is registered, your account deletion request '
+                    'has been submitted for review by an NSTP administrator. '
+                    'You will be notified once it is processed.'
+                ),
+            })
+
+        AccountDeletionRequest.objects.filter(
+            user=user, status='pending'
+        ).delete()
+        AccountDeletionRequest.objects.create(
+            user=user,
+            email=user.email,
+            reason=reason,
+        )
+
+        try:
+            msg = EmailMultiAlternatives(
+                'Account deletion request received - ISU NSTP Attendance',
+                (
+                    f"Hello {user.get_full_name() or user.username},\n\n"
+                    f"We received your request to delete your ISU NSTP Attendance "
+                    f"account and the data associated with it.\n\n"
+                    f"Your request is now pending review by an NSTP administrator. "
+                    f"You will receive another email once it has been processed.\n\n"
+                    f"If you did not submit this request, please contact the NSTP "
+                    f"office immediately.\n\n"
+                    f"- ISU NSTP Support"
+                ),
+                getattr(settings, 'DEFAULT_FROM_EMAIL'),
+                [user.email],
+            )
+            msg.send()
+        except Exception as email_err:
+            print(f"❌ Failed to send deletion ack email to {user.email}: {email_err}")
+
+        return render(request, 'attendance/account_deletion.html', {
+            'success': (
+                'Your account deletion request has been submitted. '
+                'An NSTP administrator will review it, and you will be '
+                'notified once your account and associated data are deleted.'
+            ),
+        })
+
+    return render(request, 'attendance/account_deletion.html')
 
 

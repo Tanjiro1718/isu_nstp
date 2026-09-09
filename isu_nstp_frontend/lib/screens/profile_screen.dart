@@ -98,6 +98,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  /// Submits a password-confirmed account deletion request.
+  /// Returns null on success, or the error message to display.
+  Future<String?> _requestAccountDeletion(
+    String password,
+    String email,
+  ) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse(
+                '${ApiConfig.baseUrl}/api/account-deletion/request/'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true',
+            },
+            body: json.encode({
+              'user_id': widget.user.id,
+              'password': password,
+              'email': email,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 201) return null;
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      return data['detail']?.toString() ?? 'Could not submit your request.';
+    } on TimeoutException {
+      return 'Connection timed out. Please try again.';
+    } catch (e) {
+      return 'Failed to reach server: $e';
+    }
+  }
+
   // ------------------------------------------------------ Change password flow
 
   /// Requires a biometric match before the change-password sheet will open.
@@ -499,6 +533,251 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ---------------------------------------------------------- Delete account
+
+  /// First asks for an explicit password-confirmed confirmation in a sheet,
+  /// then submits the account deletion request.
+  void _showDeleteAccountSheet() {
+    final passwordController = TextEditingController();
+    final emailController = TextEditingController(text: widget.user.email);
+    final formKey = GlobalKey<FormState>();
+
+    bool busy = false;
+    bool obscure = true;
+    String? error;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Future<void> submit() async {
+              if (!formKey.currentState!.validate()) return;
+              setSheetState(() {
+                error = null;
+                busy = true;
+              });
+
+              final failure = await _requestAccountDeletion(
+                passwordController.text,
+                emailController.text.trim(),
+              );
+              setSheetState(() => busy = false);
+
+              if (failure == null) {
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                _showDeletionRequestedDialog();
+              } else {
+                setSheetState(() => error = failure);
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.delete_forever, color: Colors.red),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Delete Account',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed:
+                              busy ? null : () => Navigator.pop(sheetContext),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    if (error != null)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.error_outline,
+                                color: Colors.red.shade700, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                error!,
+                                style: TextStyle(
+                                    color: Colors.red.shade700, fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: const Text(
+                        'This will permanently delete your account and the '
+                        'personal data associated with it after review by an '
+                        'NSTP administrator. Attendance records that must be '
+                        'kept for institutional purposes may be retained in '
+                        'anonymized form. This action cannot be undone.',
+                        style: TextStyle(fontSize: 13, color: Colors.red),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    Form(
+                      key: formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextFormField(
+                            controller: emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            decoration: const InputDecoration(
+                              labelText: 'Account Email',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.email, color: isuGreen),
+                            ),
+                            validator: (v) {
+                              final email = (v ?? '').trim();
+                              if (email.isEmpty) return 'Enter your email.';
+                              if (!email.contains('@')) {
+                                return 'Enter a valid email address.';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: passwordController,
+                            obscureText: obscure,
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              border: const OutlineInputBorder(),
+                              prefixIcon:
+                                  const Icon(Icons.lock_outline, color: isuGreen),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  obscure
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                  color: Colors.grey,
+                                ),
+                                onPressed: () =>
+                                    setSheetState(() => obscure = !obscure),
+                              ),
+                            ),
+                            validator: (v) => (v == null || v.isEmpty)
+                                ? 'Enter your password to confirm.'
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(48),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: busy ? null : submit,
+                        icon: busy
+                            ? const SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.delete_forever),
+                        label: Text(
+                          busy ? 'Submitting...' : 'Request Account Deletion',
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showDeletionRequestedDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.hourglass_top, color: isuGreen),
+            SizedBox(width: 8),
+            Text('Request Submitted', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: const Text(
+          'Your account deletion request has been submitted. An NSTP '
+          'administrator will review it, and you will be notified once your '
+          'account has been deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK', style: TextStyle(color: isuGreen)),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ------------------------------------------------------------------- Widgets
 
   Widget _detailTile(IconData icon, String label, String? value) {
@@ -646,6 +925,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _verifyThenChangePassword,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_forever, color: Colors.red),
+                  title: const Text(
+                    'Delete Account',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  subtitle: const Text(
+                    'Request deletion of your account and the data associated '
+                    'with it. An NSTP administrator will process the request.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _showDeleteAccountSheet,
                 ),
                 const SizedBox(height: 8),
               ],
