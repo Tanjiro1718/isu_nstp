@@ -20,6 +20,7 @@ from rest_framework.routers import DefaultRouter
 from attendance.views import UserViewSet, invite_landing_page
 from django.conf import settings
 from django.conf.urls.static import static
+from attendance.views import privacy_policy
 
 
 router = DefaultRouter()
@@ -28,6 +29,7 @@ router.register(r'users', UserViewSet, basename='user')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('attendance.urls')),
+    path("privacy-policy/", privacy_policy, name="privacy_policy"),
 
     # Shareable class invitation link (opened in a browser by students)
     path('join/<str:token>/', invite_landing_page, name='invite-landing'),

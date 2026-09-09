@@ -64,6 +64,8 @@ from rest_framework.permissions import IsAuthenticated
 
 User = get_user_model()
 
+def privacy_policy(request):
+    return render(request, "privacy_policy.html")
 
 def generate_otp():
     """Helper function to generate a random 6-digit OTP code."""

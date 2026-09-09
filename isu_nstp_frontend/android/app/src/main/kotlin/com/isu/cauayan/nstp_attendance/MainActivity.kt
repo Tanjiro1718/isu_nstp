@@ -1,4 +1,4 @@
-package com.example.isu_nstp_frontend
+package com.isu.cauayan.nstp_attendance
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 
