@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "221622757628",
-    "project_id": "nstp-attendance-1718-a2e13",
-    "storage_bucket": "nstp-attendance-1718-a2e13.firebasestorage.app"
+    "project_number": "452391897395",
+    "project_id": "nstp-attendance-ad4e2",
+    "storage_bucket": "nstp-attendance-ad4e2.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:221622757628:android:2783aad6dca1adecd24f79",
+        "mobilesdk_app_id": "1:452391897395:android:004ebc35e95c4bcbbe1646",
         "android_client_info": {
-          "package_name": "com.example.isu_nstp_frontend"
+          "package_name": "com.isu.cauayan.nstp_attendance"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyD2_BuYu_S6vQzINZRSh8Eh3p-YSrRGiQE"
+          "current_key": "AIzaSyAiBAFEvne0VAxLCn0GQFStN_Ui-BbFKrY"
         }
       ],
       "services": {
