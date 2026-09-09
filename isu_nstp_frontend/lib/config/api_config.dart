@@ -5,8 +5,8 @@ class ApiConfig {
       return override;
     }
 
-    // Replace your old local IP with your ngrok HTTPS URL:
-    return 'https://endpoint-chooser-finally.ngrok-free.dev'; 
+    // Production backend hosted on Render.
+    return 'https://isu-nstp-1.onrender.com'; 
   }
 
   static String get loginUrl => '$baseUrl/api/login/';

@@ -3,7 +3,12 @@ set -e
 
 # Restore the Firebase service account key when provided as an env var.
 # Render does not let you upload files, so we pass the JSON content directly.
-if [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+# Prefer FIREBASE_SERVICE_ACCOUNT_B64 (base64-encoded JSON): a single line,
+# so it cannot be mangled by newline/paste formatting issues.
+if [ -n "$FIREBASE_SERVICE_ACCOUNT_B64" ]; then
+    echo "$FIREBASE_SERVICE_ACCOUNT_B64" | base64 -d > /app/serviceAccountKey.json
+    echo "Firebase service account key written from FIREBASE_SERVICE_ACCOUNT_B64."
+elif [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
     echo "$FIREBASE_SERVICE_ACCOUNT" > /app/serviceAccountKey.json
     echo "Firebase service account key written from FIREBASE_SERVICE_ACCOUNT."
 fi

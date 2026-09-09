@@ -11,9 +11,12 @@ CRED_PATH = os.path.join(settings.BASE_DIR, 'serviceAccountKey.json')
 
 if not firebase_admin._apps:
     if os.path.exists(CRED_PATH):
-        cred = credentials.Certificate(CRED_PATH)
-        firebase_admin.initialize_app(cred)
-        print("✅ Firebase Admin SDK initialized successfully.")
+        try:
+            cred = credentials.Certificate(CRED_PATH)
+            firebase_admin.initialize_app(cred)
+            print("✅ Firebase Admin SDK initialized successfully.")
+        except (ValueError, IOError, TypeError) as exc:
+            print(f"⚠️ WARNING: Could not load serviceAccountKey.json ({exc}). Push notifications will be disabled.")
     else:
         print("⚠️ WARNING: serviceAccountKey.json not found! Push notifications will be disabled.")
 

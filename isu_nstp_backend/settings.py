@@ -77,25 +77,40 @@ WSGI_APPLICATION = 'isu_nstp_backend.wsgi.application'
 # Database configuration
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 #
-# In production (Render) a PostgreSQL DATABASE_URL is provided via the
-# environment. Locally, where DATABASE_URL is unset or holds an unsupported
-# scheme (e.g. a Prisma shadow DB URL), we fall back to the existing local
-# MySQL database so development keeps working unchanged.
+# Production (Render) must supply a PostgreSQL DATABASE_URL. Locally, where
+# DATABASE_URL is unset or holds an unsupported scheme (e.g. a Prisma shadow
+# DB URL), we fall back to the existing local MySQL database so development
+# keeps working unchanged. In production a missing/invalid DATABASE_URL is a
+# hard error - never silently point at a local database.
+
+from django.core.exceptions import ImproperlyConfigured
 
 _LOCAL_DB_URL = 'mysql://root:096161@127.0.0.1:3306/isu_nstp_db'
+_DATABASE_URL = os.getenv('DATABASE_URL')
 
 try:
     DATABASES = {
         'default': dj_database_url.config(
-            default=os.getenv('DATABASE_URL', _LOCAL_DB_URL),
+            default=_LOCAL_DB_URL if _DATABASE_URL is None else _DATABASE_URL,
             conn_max_age=600,
             ssl_require=os.getenv('DATABASE_SSL_REQUIRE', 'false') == 'true',
         )
     }
 except ValueError:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            'DATABASE_URL is set to an unsupported value. '
+            'Provide a valid PostgreSQL URL, e.g. '
+            'postgresql://user:password@host:5432/dbname'
+        )
     DATABASES = {
         'default': dj_database_url.parse(_LOCAL_DB_URL, conn_max_age=600)
     }
+
+if _DATABASE_URL is None and not DEBUG:
+    raise ImproperlyConfigured(
+        'DATABASE_URL is required in production. Set it in Render -> Environment.'
+    )
 
 
 # Password validation
@@ -136,10 +151,52 @@ STATIC_URL = 'static/'
 
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# ------------------------------------------------------------------------------
+# FILE STORAGE
+# ------------------------------------------------------------------------------
+# Django 5.2 configures storage backends via the STORAGES dict. Static files
+# are compressed + hashed by WhiteNoise and served from the same origin.
+
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
+
+# Local development keeps files on disk (media/). When USE_SUPABASE_STORAGE is
+# 'true' (production), uploaded files - student IDs, selfies, excuses - are
+# stored in a Supabase Storage bucket (S3-compatible) so they survive Render's
+# ephemeral disk / redeploys.
+#
+# Required env vars in production:
+#   USE_SUPABASE_STORAGE=true
+#   SUPABASE_S3_ACCESS_KEY   (Settings -> Storage -> S3 Access Keys)
+#   SUPABASE_S3_SECRET_KEY
+#   SUPABASE_S3_BUCKET       (e.g. "media", created as Public)
+#   SUPABASE_S3_ENDPOINT_URL (https://<project-ref>.supabase.co/storage/v1/s3)
+#   SUPABASE_S3_REGION       (e.g. ap-southeast-1)
+
+if os.getenv('USE_SUPABASE_STORAGE', 'false') == 'true':
+    INSTALLED_APPS += ['storages']
+    STORAGES['default'] = {
+        'BACKEND': 'storages.backends.s3.S3Storage',
+        'OPTIONS': {
+            'access_key': os.getenv('SUPABASE_S3_ACCESS_KEY', ''),
+            'secret_key': os.getenv('SUPABASE_S3_SECRET_KEY', ''),
+            'bucket_name': os.getenv('SUPABASE_S3_BUCKET', 'media'),
+            'endpoint_url': os.getenv('SUPABASE_S3_ENDPOINT_URL', ''),
+            'region_name': os.getenv('SUPABASE_S3_REGION', 'ap-southeast-1'),
+            'file_overwrite': False,
+            'querystring_auth': False,
+            'default_acl': 'public-read',
+        },
+    }
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
