@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -54,6 +55,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
     _passwordController.removeListener(_onPasswordChanged);
     _firstNameController.dispose();
     _middleNameController.dispose();
@@ -69,7 +71,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // --- Image Picker Logic ---
   Future<void> _pickImage() async {
-    final XFile? pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+    // maxWidth + imageQuality make the upload fast: the phone squeezes a
+    // multi-megabyte gallery photo down to a ~100-300KB JPEG before it ever
+    // touches the network (the single biggest registration slowdown before).
+    final XFile? pickedFile = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1280,
+      maxHeight: 1280,
+      imageQuality: 70,
+    );
 
     if (pickedFile != null) {
       setState(() {
@@ -152,7 +162,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _idImageFile!.path,
       ));
 
-      var streamedResponse = await request.send();
+      var streamedResponse = await request.send().timeout(const Duration(seconds: 45));
       var response = await http.Response.fromStream(streamedResponse);
 
       if (!mounted) return;
@@ -179,6 +189,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         );
       }
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Taking too long. Check your connection and try again.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -218,7 +238,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'email': _emailController.text.trim().toLowerCase(),
           'otp_code': _otpController.text.trim(),
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -234,9 +254,104 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         );
       }
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Connection timed out. Please try again.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Network Error: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  // --- Resend the OTP email without re-filling the whole form ---
+  bool _resendingCode = false;
+  int _resendCooldown = 0;
+  Timer? _resendTimer;
+
+  void _startResendCooldown() {
+    _resendTimer?.cancel();
+    setState(() => _resendCooldown = 30);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _resendCooldown -= 1);
+      if (_resendCooldown <= 0) timer.cancel();
+    });
+  }
+
+  Future<void> _resendCode() async {
+    if (_resendingCode || _resendCooldown > 0) return;
+
+    setState(() => _resendingCode = true);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/register/resend-code/'),
+            headers: {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true',
+            },
+            body: json.encode({
+              'email': _emailController.text.trim().toLowerCase(),
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (!mounted) return;
+      setState(() => _resendingCode = false);
+
+      if (response.statusCode == 200) {
+        _startResendCooldown();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('A new verification code was sent to your email.'),
+            backgroundColor: isuGreen,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        String message = 'Could not resend the code.';
+        try {
+          final data = json.decode(response.body);
+          if (data['detail'] != null) message = data['detail'] as String;
+        } catch (_) {}
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() => _resendingCode = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Connection timed out. Please try again.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _resendingCode = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Network Error: $e'),
@@ -356,6 +471,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         ),
         const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_resendCooldown > 0)
+              Text(
+                'Resend code in $_resendCooldown s',
+                style: const TextStyle(color: Colors.grey),
+              )
+            else
+              TextButton(
+                onPressed: _resendingCode ? null : _resendCode,
+                child: _resendingCode
+                    ? const SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: isuGreen,
+                        ),
+                      )
+                    : const Text(
+                        'Resend code',
+                        style: TextStyle(
+                          color: isuGreen,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ),
+          ],
+        ),
         TextButton(
           onPressed: () {
             setState(() {

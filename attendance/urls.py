@@ -18,6 +18,7 @@ from .views import (
     RegisterDeviceTokenAPIView,
     SendVerificationCodeAPIView,
     VerifyOTPAPIView,
+    ResendVerificationCodeAPIView,
     ClassGroupListCreateAPIView,
     ClassGroupDetailAPIView,
     RotateJoinCodeAPIView,
@@ -59,6 +60,8 @@ router.register(r'users', UserViewSet, basename='user')
 urlpatterns = [
     # 1. Registration endpoint (matches RegisterView)
     path('register/', RegisterView.as_view(), name='api-register'),
+    # Resend the registration OTP for an unverified account ("Resend code").
+    path('register/resend-code/', ResendVerificationCodeAPIView.as_view(), name='api-register-resend-code'),
     
     # 2. Login endpoint
     path('login/', LoginAPIView.as_view(), name='api-login'),

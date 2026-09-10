@@ -1,6 +1,7 @@
 import csv
 import random
 import re
+import threading
 from django.http import HttpResponse
 from django.shortcuts import render
 from rest_framework.views import APIView
@@ -76,6 +77,34 @@ def generate_otp():
     """Helper function to generate a random 6-digit OTP code."""
     return str(random.randint(100000, 999999))
 
+
+def send_registration_email(email, otp_code):
+    """Deliver the registration OTP by email (runs on a background thread so
+    the /api/register/ response is not held up by the SMTP round-trip)."""
+    subject = f"{otp_code} is your ISU verification code"
+    text_content = f"Your ISU verification code is: {otp_code}. It will expire in 10 minutes."
+    try:
+        msg = EmailMultiAlternatives(
+            subject,
+            text_content,
+            getattr(settings, 'DEFAULT_FROM_EMAIL'),
+            [email],
+        )
+        msg.attach_alternative(f"<h2>Your verification code is: <b>{otp_code}</b></h2>", "text/html")
+        msg.send()
+    except Exception as e:
+        # The student can hit "Resend code" - never block account creation on
+        # a slow/failing mail server.
+        print(f"\n❌ Registration email failed for {email}: {str(e)}\n")
+
+
+def _resend_registration_email(email, otp_code):
+    threading.Thread(
+        target=send_registration_email,
+        args=(email, otp_code),
+        daemon=True,
+    ).start()
+
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     parser_classes = (MultiPartParser, FormParser)
@@ -119,9 +148,20 @@ class RegisterView(APIView):
         # --- Basic Validation ---
         if not email or not email.endswith('@isu.edu.ph'):
             return Response({'detail': 'Only @isu.edu.ph email addresses are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        if User.objects.filter(email=email).exists():
-            return Response({'detail': 'An account with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing_user = User.objects.filter(email=email).first()
+        if existing_user is not None:
+            existing_profile = getattr(existing_user, 'student_profile', None) or getattr(existing_user, 'studentprofile', None) or getattr(existing_user, 'profile', None)
+            already_verified = getattr(existing_profile, 'is_email_verified', False)
+            already_approved = getattr(existing_profile, 'is_approved_by_admin', False)
+
+            # A verified and/or approved account owns this email - no takebacks.
+            if already_verified or already_approved or existing_user.is_active:
+                return Response({'detail': 'An account with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Unverified leftovers (student mistyped details / email send failed).
+            # Replace them so the student can resubmit instead of being stuck.
+            existing_user.delete()
 
         # New students must consent to the Privacy Policy and Terms before we
         # create the account. Mirrors the checkbox on the registration screen.
@@ -157,28 +197,50 @@ class RegisterView(APIView):
                     id_picture_front=id_picture_front,
                     fcm_token=fcm_token  # 👈 SAVED HERE NOW
                 )
+
+                # 3. GENERATE & SAVE OTP (inside the atomic block so a failure
+                #    anywhere above rolls the whole registration back cleanly.)
+                otp_code = generate_otp()
+                OTPVerification.objects.update_or_create(
+                    email=email,
+                    defaults={'code': str(otp_code)}
+                )
         except Exception as e:
             print(f"\n❌ DATABASE CRASH: {str(e)}\n")
             return Response({'detail': f'Failed to save account: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 3. GENERATE & SAVE OTP
+        # 4. SEND VERIFICATION EMAIL - on a background thread so the app gets
+        #    its 201 response immediately and the student lands on the OTP
+        #    screen without waiting for the mail server.
+        _resend_registration_email(email, otp_code)
+
+        return Response({'message': 'Registration request submitted!'}, status=status.HTTP_201_CREATED)
+
+class ResendVerificationCodeAPIView(APIView):
+    """Resends the registration OTP for an existing but unverified account.
+    Used by the "Resend code" button on the OTP screen - teachers the email
+    latency without making the student re-fill the whole form."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email', '').strip().lower()
+
+        user = User.objects.filter(email=email).first()
+        if user is None:
+            return Response({'detail': 'No registration found for this email.'}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = getattr(user, 'student_profile', None) or getattr(user, 'studentprofile', None) or getattr(user, 'profile', None)
+        if getattr(profile, 'is_email_verified', False) or user.is_active:
+            return Response({'detail': 'This email is already verified.'}, status=status.HTTP_400_BAD_REQUEST)
+
         otp_code = generate_otp()
         OTPVerification.objects.update_or_create(
             email=email,
             defaults={'code': str(otp_code)}
         )
+        _resend_registration_email(email, otp_code)
 
-        # 4. SEND VERIFICATION EMAIL
-        subject = f"{otp_code} is your ISU verification code"
-        text_content = f"Your ISU verification code is: {otp_code}."
-        
-        try:
-            msg = EmailMultiAlternatives(subject, text_content, getattr(settings, 'DEFAULT_FROM_EMAIL'), [email])
-            msg.send()
-            return Response({'message': 'Registration request submitted!'}, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            user.delete() 
-            return Response({'detail': f'Failed to send email: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'message': 'A new verification code was sent to your email.'}, status=status.HTTP_200_OK)
 
 class SendVerificationCodeAPIView(APIView):
     permission_classes = [AllowAny]
@@ -255,6 +317,17 @@ class VerifyOTPAPIView(APIView):
             if record.code == submitted_code:
                 record.delete()
                 print("✅ SUCCESS: Codes matched!")
+                # The whole point of the OTP step: record that this email truly
+                # belongs to the student. Until this flag is stamped the account
+                # stays unverified (and can be replaced on a resubmit).
+                try:
+                    user = User.objects.filter(email=email).first()
+                    profile = getattr(user, 'student_profile', None) or getattr(user, 'studentprofile', None) or getattr(user, 'profile', None)
+                    if profile is not None and not profile.is_email_verified:
+                        profile.is_email_verified = True
+                        profile.save(update_fields=['is_email_verified'])
+                except Exception as verify_err:
+                    print(f"❌ Could not stamp is_email_verified for {email}: {verify_err}")
                 return Response({'message': 'Code verified successfully!'}, status=status.HTTP_200_OK)
             else:
                 print(f"❌ MISMATCH: App sent '{submitted_code}', but DB holds '{record.code}'")
@@ -295,6 +368,11 @@ class ApproveRejectUserView(views.APIView):
                 getattr(user, 'studentprofile', None) or 
                 getattr(user, 'profile', None)
             )
+            # Keep the approval flag consistent with the active state so the
+            # pending list / serializers reflect reality as soon as possible.
+            if profile is not None and profile.is_approved_by_admin != is_active:
+                profile.is_approved_by_admin = is_active
+                profile.save(update_fields=['is_approved_by_admin'])
             fcm_token = getattr(profile, 'fcm_token', None) if profile else None
             print(f"🔍 DEBUG USER EMAIL: {user.email} | FCM TOKEN: {fcm_token}")
 
