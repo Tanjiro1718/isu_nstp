@@ -10,6 +10,7 @@ import '../../services/class_service.dart';
 import '../../services/presence_service.dart';
 import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
+import '../../widgets/change_password_flow.dart';
 import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
 import 'attendance_history_screen.dart';
@@ -1751,9 +1752,32 @@ class _StudentDashboardState extends State<StudentDashboard> {
             // With protection on the details stay hidden until the device
             // check passes. Gating here rather than on the button means the lock
             // re-arms every time the dialog is reopened.
-            child: _profileLockEnabled
-                ? BiometricLockWidget(child: _buildProfileDetails())
-                : _buildProfileDetails(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.lock_reset, color: isuGreen),
+                  title: const Text(
+                    'Change Password',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text(
+                    'Verify your identity, then set a new password',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.pop(dialogContext);
+                    ChangePasswordFlow.show(context, _currentUser);
+                  },
+                ),
+                const Divider(height: 1),
+                if (_profileLockEnabled)
+                  BiometricLockWidget(child: _buildProfileDetails())
+                else
+                  _buildProfileDetails(),
+              ],
+            ),
           ),
           actions: [
             TextButton(

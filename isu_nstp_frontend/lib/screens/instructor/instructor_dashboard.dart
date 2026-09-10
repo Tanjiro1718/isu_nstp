@@ -3,6 +3,7 @@ import '../../models/user_model.dart';
 import '../../services/notification_service.dart';
 import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
+import '../../widgets/change_password_flow.dart';
 import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
 import 'instructor_settings_screen.dart';
@@ -172,6 +173,23 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
               children: [
                 _buildProfileLockCard(),
                 const Divider(height: 24),
+                ListTile(
+                  leading: const Icon(Icons.lock_reset, color: isuGreen),
+                  title: const Text(
+                    'Change Password',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text(
+                    'Verify your identity, then set a new password',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.pop(dialogContext);
+                    ChangePasswordFlow.show(context, widget.user);
+                  },
+                ),
+                const Divider(height: 1),
                 if (_profileLockEnabled)
                   BiometricLockWidget(child: _buildProfileDetails())
                 else
