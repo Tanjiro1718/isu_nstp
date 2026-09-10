@@ -32,6 +32,7 @@ from .serializers import (
     ClassGroupSerializer,
     ClassGroupDetailSerializer,
     ClassMemberSerializer,
+    EditProfileSerializer,
 )
 
 from rest_framework.permissions import AllowAny
@@ -3589,6 +3590,71 @@ class RequestAccountDeletionAPIView(APIView):
                 ),
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class EditProfileAPIView(APIView):
+    """
+    Self-service profile edits (Profile screen) for staff roles.
+
+    Matches the app's existing proof pattern (user_id + password, no bearer
+    tokens) so every staff account can update their name / email / phone, plus
+    the instructor department. Students are blocked outright - their profile
+    fields are admin-governed.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        password = request.data.get('current_password') or ''
+
+        if not user_id or not password:
+            return Response(
+                {'detail': 'user_id and current_password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not user.check_password(password):
+            return Response(
+                {'detail': 'Incorrect password. Your profile was not updated.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        role = (user.role or '').lower()
+        if role == 'student':
+            return Response(
+                {'detail': 'Students cannot edit profile details.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Email is the app's recovery/notification address - it must stay unique.
+        new_email = (request.data.get('email') or '').strip().lower()
+        if new_email:
+            taken = User.objects.exclude(pk=user.pk).filter(email__iexact=new_email).exists()
+            if taken:
+                return Response(
+                    {'detail': 'That email is already in use by another account.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        serializer = EditProfileSerializer(user, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        updated_user = serializer.save()
+
+        response_data = UserSerializer(updated_user, context={'request': request}).data
+        return Response(
+            {
+                'message': 'Profile updated successfully.',
+                'user': response_data,
+            },
+            status=status.HTTP_200_OK,
         )
 
 

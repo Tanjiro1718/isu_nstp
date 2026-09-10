@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/user_model.dart';
 import '../services/profile_lock_service.dart';
+import '../services/session_service.dart';
 import '../utils/password_policy.dart';
 import '../widgets/password_strength_meter.dart';
 
@@ -29,6 +30,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   static const Color isuGreen = Color(0xFF006837);
   static const Color isuDarkGreen = Color(0xFF004D25);
 
+  /// Mutable copy of the signed-in user so profile edits can refresh the UI
+  /// (and persisted session) without a full re-login.
+  late UserModel _user = widget.user;
+
   // ---------------------------------------------------------------- API calls
 
   /// Step 1: verify current password + email, then send the code.
@@ -46,7 +51,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               'ngrok-skip-browser-warning': 'true',
             },
             body: json.encode({
-              'user_id': widget.user.id,
+              'user_id': _user.id,
               'current_password': currentPassword,
               'email': email,
             }),
@@ -79,7 +84,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               'ngrok-skip-browser-warning': 'true',
             },
             body: json.encode({
-              'user_id': widget.user.id,
+              'user_id': _user.id,
               'current_password': currentPassword,
               'code': code,
               'new_password': newPassword,
@@ -114,7 +119,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               'ngrok-skip-browser-warning': 'true',
             },
             body: json.encode({
-              'user_id': widget.user.id,
+              'user_id': _user.id,
               'password': password,
               'email': email,
             }),
@@ -130,6 +135,306 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       return 'Failed to reach server: $e';
     }
+  }
+
+  // -------------------------------------------------------- Edit profile flow
+
+  /// Submits the profile edit. Returns null on success, or the error message.
+  Future<String?> _submitProfileEdit(
+    String currentPassword,
+    String email,
+    String firstName,
+    String middleName,
+    String lastName,
+    String phoneNumber,
+    String department,
+  ) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/edit-profile/'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true',
+            },
+            body: json.encode({
+              'user_id': _user.id,
+              'current_password': currentPassword,
+              'email': email.trim(),
+              'first_name': firstName.trim(),
+              'middle_name': middleName.trim(),
+              'last_name': lastName.trim(),
+              'phone_number': phoneNumber.trim(),
+              'department': department.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        if (data['user'] is Map<String, dynamic>) {
+          final updated = UserModel.fromJson(data['user'] as Map<String, dynamic>);
+          setState(() => _user = updated);
+          await SessionService.saveUser(updated);
+        }
+        return null;
+      }
+
+      Map<String, dynamic> data = {};
+      try {
+        data = json.decode(response.body) as Map<String, dynamic>;
+      } catch (_) {}
+
+      // DRF field errors arrive as a map of field -> [message].
+      if (data.values.any((v) => v is List && v.isNotEmpty)) {
+        final first = data.entries.firstWhere(
+          (e) => e.value is List && (e.value as List).isNotEmpty,
+        );
+        final messages = first.value as List;
+        return '${first.key}: ${messages.first}';
+      }
+      return data['detail']?.toString() ?? 'Could not update your profile.';
+    } on TimeoutException {
+      return 'Connection timed out. Please try again.';
+    } catch (e) {
+      return 'Failed to reach server: $e';
+    }
+  }
+
+  /// Opens the edit-profile sheet. Shown only for non-student roles.
+  void _editProfile() {
+    final formKey = GlobalKey<FormState>();
+    final firstNameController = TextEditingController(text: _user.firstName);
+    final middleNameController = TextEditingController(text: _user.middleName);
+    final lastNameController = TextEditingController(text: _user.lastName);
+    final emailController = TextEditingController(text: _user.email);
+    final phoneController = TextEditingController(text: _user.phoneNumber);
+    final departmentController = TextEditingController(text: _user.department);
+    final passwordController = TextEditingController();
+
+    final isInstructor = _user.role.toLowerCase() == 'instructor';
+
+    bool busy = false;
+    bool obscure = true;
+    String? error;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      isDismissible: false,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Future<void> submit() async {
+              final messenger = ScaffoldMessenger.of(context);
+              if (!formKey.currentState!.validate()) return;
+              setSheetState(() {
+                error = null;
+                busy = true;
+              });
+
+              final failure = await _submitProfileEdit(
+                passwordController.text,
+                emailController.text,
+                firstNameController.text,
+                middleNameController.text,
+                lastNameController.text,
+                phoneController.text,
+                departmentController.text,
+              );
+              setSheetState(() => busy = false);
+
+              if (failure == null) {
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Profile updated successfully'),
+                    backgroundColor: isuGreen,
+                  ),
+                );
+              } else {
+                setSheetState(() => error = failure);
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.edit_outlined, color: isuGreen),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Edit Profile',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: isuDarkGreen,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed:
+                                busy ? null : () => Navigator.pop(sheetContext),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      if (error != null)
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            error!,
+                            style: TextStyle(
+                              color: Colors.red.shade700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+
+                      TextFormField(
+                        controller: firstNameController,
+                        decoration: const InputDecoration(
+                          labelText: 'First Name',
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) => (v == null || v.trim().isEmpty)
+                            ? 'First name is required.'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: middleNameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Middle Name',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: lastNameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Last Name',
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) => (v == null || v.trim().isEmpty)
+                            ? 'Last name is required.'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: emailController,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          labelText: 'Email',
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) {
+                          final value = (v ?? '').trim();
+                          if (value.isEmpty) return 'Email is required.';
+                          if (!value.contains('@')) return 'Enter a valid email.';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: phoneController,
+                        keyboardType: TextInputType.phone,
+                        decoration: const InputDecoration(
+                          labelText: 'Phone Number',
+                          hintText: 'e.g. 09171234567',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (isInstructor) ...[
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: departmentController,
+                          decoration: const InputDecoration(
+                            labelText: 'Department',
+                            hintText: 'ROTC / CWTS / LTS',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: passwordController,
+                        obscureText: obscure,
+                        decoration: InputDecoration(
+                          labelText: 'Current Password',
+                          helperText:
+                              'Confirm your password so the details can be saved',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(obscure
+                                ? Icons.visibility_off
+                                : Icons.visibility),
+                            onPressed: () => setSheetState(
+                                () => obscure = !obscure),
+                          ),
+                        ),
+                        validator: (v) => (v == null || v.isEmpty)
+                            ? 'Current password is required.'
+                            : null,
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: isuGreen,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: busy ? null : submit,
+                          child: busy
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('Save Changes',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   // ------------------------------------------------------ Change password flow
@@ -191,7 +496,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   void _showChangePasswordSheet() {
     final currentPasswordController = TextEditingController();
-    final emailController = TextEditingController(text: widget.user.email);
+    final emailController = TextEditingController(text: _user.email);
     final codeController = TextEditingController();
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
@@ -539,7 +844,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   /// then submits the account deletion request.
   void _showDeleteAccountSheet() {
     final passwordController = TextEditingController();
-    final emailController = TextEditingController(text: widget.user.email);
+    final emailController = TextEditingController(text: _user.email);
     final formKey = GlobalKey<FormState>();
 
     bool busy = false;
@@ -797,7 +1102,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user = widget.user;
+    final user = _user;
     final roleLabel = user.role.isEmpty
         ? 'Student'
         : user.role[0].toUpperCase() + user.role.substring(1);
@@ -891,7 +1196,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       user.courseAndSection),
                   _detailTile(
                       Icons.category_outlined, 'Component', user.component),
+                ] else ...[
+                  _detailTile(Icons.person_outline, 'Full Name', user.displayName),
+                  if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty)
+                    _detailTile(Icons.phone_outlined, 'Phone', user.phoneNumber),
+                  if (user.department != null && user.department!.isNotEmpty)
+                    _detailTile(Icons.apartment_outlined, 'Department',
+                        user.department),
                 ],
+                // Instructor / director / admin can maintain their own details.
+                // Students are governed by the NSTP office, so they get no edit.
+                if (user.role.toLowerCase() != 'student')
+                  ListTile(
+                    leading: const Icon(Icons.edit_outlined, color: isuGreen),
+                    title: const Text('Edit Profile',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: const Text(
+                      'Update your name, phone number, and email',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _editProfile,
+                  ),
                 const SizedBox(height: 8),
               ],
             ),

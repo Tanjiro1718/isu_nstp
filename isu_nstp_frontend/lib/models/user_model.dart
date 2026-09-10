@@ -13,6 +13,8 @@ class UserModel {
   final String? firstName;
   final String? middleName;
   final String? lastName;
+  final String? phoneNumber;
+  final String? department;
   final String? idPictureUrl;
   final String? dateJoined;
   final bool isEmailVerified;
@@ -31,6 +33,8 @@ class UserModel {
     this.firstName,
     this.middleName,
     this.lastName,
+    this.phoneNumber,
+    this.department,
     this.idPictureUrl,
     this.dateJoined,
     this.isEmailVerified = false,
@@ -76,6 +80,8 @@ class UserModel {
       firstName: json['first_name']?.toString(),
       middleName: json['middle_name']?.toString(),
       lastName: json['last_name']?.toString(),
+      phoneNumber: json['phone_number']?.toString(),
+      department: json['department']?.toString(),
       idPictureUrl: json['id_picture_front']?.toString(),
       dateJoined: json['date_joined']?.toString(),
       isEmailVerified: asBool(json['is_email_verified']),
@@ -98,6 +104,8 @@ class UserModel {
       'first_name': firstName,
       'middle_name': middleName,
       'last_name': lastName,
+      'phone_number': phoneNumber,
+      'department': department,
       'id_picture_front': idPictureUrl,
       'date_joined': dateJoined,
       'is_email_verified': isEmailVerified,
@@ -119,6 +127,8 @@ class UserModel {
     String? firstName,
     String? middleName,
     String? lastName,
+    String? phoneNumber,
+    String? department,
     String? idPictureUrl,
     String? dateJoined,
     bool? isEmailVerified,
@@ -137,6 +147,8 @@ class UserModel {
       firstName: firstName ?? this.firstName,
       middleName: middleName ?? this.middleName,
       lastName: lastName ?? this.lastName,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      department: department ?? this.department,
       idPictureUrl: idPictureUrl ?? this.idPictureUrl,
       dateJoined: dateJoined ?? this.dateJoined,
       isEmailVerified: isEmailVerified ?? this.isEmailVerified,

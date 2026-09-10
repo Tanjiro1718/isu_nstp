@@ -48,6 +48,7 @@ from .views import (
     ReviewLeaveAPIView,
     UpcomingSessionsForStudentAPIView,
     RequestAccountDeletionAPIView,
+    EditProfileAPIView,
 )
 
 
@@ -126,6 +127,9 @@ urlpatterns = [
 
     # 7. Self-service account deletion (Google Play data-safety requirement)
     path('account-deletion/request/', RequestAccountDeletionAPIView.as_view(), name='api-account-deletion-request'),
+
+    # 8. Self-service profile edits (instructor / director / admin, not student)
+    path('edit-profile/', EditProfileAPIView.as_view(), name='api-edit-profile'),
 
     # 6. Router endpoints (/users/)
     path('', include(router.urls)), 

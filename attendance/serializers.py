@@ -7,6 +7,7 @@ from .models import (
     AttendanceExcuse,
     GeofenceLeaveRequest,
     StudentProfile,
+    InstructorProfile,
     SystemSettings,
     ClassGroup,
     ClassEnrollment,
@@ -97,6 +98,7 @@ class UserSerializer(serializers.ModelSerializer):
         rep['is_email_verified'] = profile.is_email_verified if profile else False
         rep['is_approved_by_admin'] = profile.is_approved_by_admin if profile else False
         rep['phone_number'] = getattr(instance, 'phone_number', None)
+        rep['department'] = self._get_instructor_department(instance)
         rep['first_name'] = instance.first_name
         rep['middle_name'] = getattr(instance, 'middle_name', None)
         rep['last_name'] = instance.last_name
@@ -110,6 +112,14 @@ class UserSerializer(serializers.ModelSerializer):
             getattr(obj, 'studentprofile', None) or 
             getattr(obj, 'profile', None)
         )
+
+    def _get_instructor_department(self, obj):
+        """Department (ROTC/CWTS/LTS) for instructor accounts, else None."""
+        profile = getattr(obj, 'instructor_profile', None) or getattr(obj, 'instructorprofile', None)
+        if profile is None:
+            return None
+        department = getattr(profile, 'department', None)
+        return str(department) if department else None
 
     def _display_role(self, obj):
         """
@@ -530,4 +540,68 @@ class GeofenceLeaveRequestSerializer(serializers.ModelSerializer):
         if not obj.reviewed_by:
             return None
         return obj.reviewed_by.get_full_name() or obj.reviewed_by.username
+
+
+class EditProfileSerializer(serializers.ModelSerializer):
+    """
+    Self-service profile edits for staff roles (instructor, director, admin).
+
+    Students are deliberately excluded - the API view gates on role before this
+    serializer ever runs. Username is the app's identity key (student id, login,
+    class matches) so it stays immutable here.
+    """
+    first_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=150
+    )
+    middle_name = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=150
+    )
+    last_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=150
+    )
+    email = serializers.EmailField(required=False, allow_blank=True)
+    phone_number = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=15
+    )
+    department = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=50
+    )
+
+    class Meta:
+        model = User
+        fields = [
+            'id',
+            'username',
+            'first_name',
+            'middle_name',
+            'last_name',
+            'email',
+            'phone_number',
+            'department',
+        ]
+        read_only_fields = ['id', 'username']
+
+    def update(self, instance, validated_data):
+        instance.email = (validated_data.get('email') or instance.email).strip()
+        instance.first_name = (validated_data.get('first_name') or instance.first_name).strip()
+        instance.last_name = (validated_data.get('last_name') or instance.last_name).strip()
+
+        if 'middle_name' in validated_data:
+            value = (validated_data.get('middle_name') or '').strip()
+            instance.middle_name = value or None
+
+        if 'phone_number' in validated_data:
+            instance.phone_number = (validated_data.get('phone_number') or '').strip()
+
+        instance.save()
+
+        # Instructors carry a department (ROTC / CWTS / LTS). Deliberately
+        # skipped for other roles so a director never gets an InstructorProfile.
+        department = (validated_data.get('department') or '').strip()
+        if department and (instance.role or '').lower() == 'instructor':
+            profile, _ = InstructorProfile.objects.get_or_create(user=instance)
+            profile.department = department
+            profile.save()
+
+        return instance
 
