@@ -152,6 +152,15 @@ def _dispatch_approval_notifications(fcm_token, username, email, approved):
             daemon=True,
         ).start()
 
+class HealthCheckAPIView(APIView):
+    """Lightweight warm-up/uptime probe. Returning quickly from a single
+    DB-less read pulls a sleeping Render instance out of cold start so the
+    student's first registration POST never pays the 30-90s boot."""
+
+    def get(self, request):
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
+
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     parser_classes = (MultiPartParser, FormParser)

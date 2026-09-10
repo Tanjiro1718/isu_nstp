@@ -40,6 +40,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscureConfirmPassword = true;
   bool _isWaitingForOtp = false;
   bool _acceptTerms = false;
+  String _uploadStatus = '';
 
   File? _idImageFile;
   final ImagePicker _picker = ImagePicker();
@@ -72,13 +73,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // --- Image Picker Logic ---
   Future<void> _pickImage() async {
     // maxWidth + imageQuality make the upload fast: the phone squeezes a
-    // multi-megabyte gallery photo down to a ~100-300KB JPEG before it ever
+    // multi-megabyte gallery photo down to a ~60-200KB JPEG before it ever
     // touches the network (the single biggest registration slowdown before).
     final XFile? pickedFile = await _picker.pickImage(
       source: ImageSource.gallery,
-      maxWidth: 1280,
-      maxHeight: 1280,
-      imageQuality: 70,
+      maxWidth: 1080,
+      maxHeight: 1080,
+      imageQuality: 65,
     );
 
     if (pickedFile != null) {
@@ -127,11 +128,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _uploadStatus = 'Sending details...';
+    });
 
     try {
-      // 🟢 FETCH FCM TOKEN FOR PUSH NOTIFICATIONS
-      String? fcmToken = await NotificationService().getDeviceToken();
+      // Start the FCM token fetch in parallel with the request setup. It is
+      // capped at 2s so a slow Firebase round-trip can never hold the submit
+      // hostage - if it isn't ready in time, the token is simply attached
+      // later at login (DeviceTokenService.register). This is the biggest
+      // single pre-submit delay removed.
+      final Future<String?> fcmFuture = NotificationService().getDeviceToken();
 
       var request = http.MultipartRequest(
         'POST',
@@ -149,9 +157,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       request.fields['course_and_section'] = _courseSectionController.text.trim();
       request.fields['email'] = _emailController.text.trim();
       request.fields['password'] = _passwordController.text;
-      
-      // 🟢 ATTACH FCM TOKEN TO MULTIPART FIELDS
-      request.fields['fcm_token'] = fcmToken ?? '';
+
+      // 🔑 OPTIONAL FCM TOKEN - only attach it if the (parallel) fetch won.
+      // An empty value is fine: the token is re-registered on login/launch.
+      request.fields['fcm_token'] = '';
 
       // Consent to the Privacy Policy and Terms, exactly as ticked above.
       request.fields['accept_terms'] = _acceptTerms ? 'true' : 'false';
@@ -162,9 +171,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _idImageFile!.path,
       ));
 
-      var streamedResponse = await request.send().timeout(const Duration(seconds: 45));
+      // Give the FCM fetch this little extra window, then move on regardless.
+      final String? fcmToken =
+          await fcmFuture.timeout(const Duration(seconds: 2), onTimeout: () => null);
+      if (fcmToken != null && fcmToken.isNotEmpty) {
+        request.fields['fcm_token'] = fcmToken;
+      }
+
+      if (!mounted) return;
+      setState(() => _uploadStatus = 'Uploading ID...');
+
+      var streamedResponse = await request.send().timeout(const Duration(seconds: 30));
       var response = await http.Response.fromStream(streamedResponse);
 
+      if (mounted) setState(() => _uploadStatus = 'Confirming...');
       if (!mounted) return;
       setState(() => _isLoading = false);
 
@@ -191,7 +211,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } on TimeoutException {
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _uploadStatus = '';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Taking too long. Check your connection and try again.'),
@@ -201,7 +224,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _uploadStatus = '';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Network Error: $e'),
@@ -797,7 +823,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               onPressed: _isLoading ? null : _handleRegister,
               child: _isLoading
-                  ? const CircularProgressIndicator(color: Colors.white)
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            _uploadStatus.isEmpty ? 'Submitting...' : _uploadStatus,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    )
                   : const Text("CONTINUE", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ),

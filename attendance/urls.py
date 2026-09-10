@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     LoginAPIView,
     RegisterView,  
+    HealthCheckAPIView,  
     ProcessCheckInAPI,
     AttendanceLogAPIView,
     AttendanceSessionAPIView,
@@ -58,6 +59,9 @@ router = DefaultRouter()
 router.register(r'users', UserViewSet, basename='user')
 
 urlpatterns = [
+    # Warm-up / uptime probe (also drags a sleeping Render instance out of
+    # cold start before the student's first registration POST).
+    path('health/', HealthCheckAPIView.as_view(), name='api-health'),
     # 1. Registration endpoint (matches RegisterView)
     path('register/', RegisterView.as_view(), name='api-register'),
     # Resend the registration OTP for an unverified account ("Resend code").

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:http/http.dart' as http;
 
 import 'models/user_model.dart';
 import 'screens/admin/admin_dashboard.dart';
@@ -7,6 +8,7 @@ import 'screens/director/director_dashboard.dart';
 import 'screens/instructor/instructor_dashboard.dart';
 import 'screens/login_screen.dart';
 import 'screens/student/student_dashboard.dart';
+import 'config/api_config.dart';
 import 'services/device_token_service.dart';
 import 'services/session_service.dart';
 
@@ -26,8 +28,26 @@ void main() async {
   // 3. Initialize Notification Service (permissions, FCM listeners, background handlers)
   await NotificationService().initialize();
 
-  // 4. Run the App
+  // 4. Nudge the backend out of Render's idle cold start BEFORE the student
+  //    needs it, so the very first register/login call isn't the slow one.
+  _warmBackend();
+
+  // 5. Run the App
   runApp(const IsuNstpApp());
+}
+
+/// Free Render instances go to sleep after ~15 min without traffic and pay a
+/// long cold boot on the next request. Fire a tiny, no-auth probe on launch so
+/// the student's first submit returns in normal time. Fire-and-forget - it
+/// must never delay or break startup.
+Future<void> _warmBackend() async {
+  try {
+    await http
+        .get(Uri.parse('${ApiConfig.baseUrl}/api/health/'))
+        .timeout(const Duration(seconds: 10));
+  } catch (_) {
+    // Warm-up is best-effort; the app works fine even if this fails.
+  }
 }
 
 class IsuNstpApp extends StatelessWidget {
