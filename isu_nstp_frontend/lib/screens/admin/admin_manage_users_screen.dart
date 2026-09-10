@@ -89,7 +89,7 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
         _showSnackBar('User deleted successfully', Colors.green);
         _fetchUsers();
       } else {
-        _showSnackBar('Failed to delete user.', Colors.red);
+        _showSnackBar('Failed to delete user. ${_extractError(response)}', Colors.red);
       }
     } catch (e) {
       _showSnackBar('Network error: $e', Colors.red);
@@ -133,25 +133,60 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
         _fetchPendingUsers();
         _fetchUsers();
       } else {
-        _showSnackBar('Failed to approve user', Colors.red);
+        _showSnackBar('Failed to approve user. ${_extractError(response)}', Colors.red);
       }
     } catch (e) {
       _showSnackBar('Network error: $e', Colors.red);
     }
   }
 
-  Future<void> _rejectUser(int userId) async {
+  Future<void> _rejectUser(int userId, String username) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reject Registration?'),
+        content: Text('This permanently deletes $username and removes them from pending approvals. This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reject', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
     try {
       final response = await http.delete(Uri.parse('$apiUrl$userId/'));
       if (response.statusCode == 200 || response.statusCode == 204) {
         _showSnackBar('User Rejected', Colors.red);
         _fetchPendingUsers();
+        _fetchUsers();
       } else {
-        _showSnackBar('Failed to reject user', Colors.red);
+        _showSnackBar('Failed to reject user. ${_extractError(response)}', Colors.red);
       }
     } catch (e) {
       _showSnackBar('Network error: $e', Colors.red);
     }
+  }
+
+  String _extractError(http.Response response) {
+    try {
+      final decoded = json.decode(response.body);
+      if (decoded is Map) {
+        final detail = decoded['detail'] ?? decoded['error'] ?? decoded['message'];
+        if (detail != null) return detail.toString();
+        final first = decoded.values.firstOrNull;
+        if (first is List && first.isNotEmpty) return first.first.toString();
+        if (first != null) return first.toString();
+      }
+    } catch (_) {
+      // fall through to raw body
+    }
+    final body = response.body.trim();
+    return body.isEmpty ? '(HTTP ${response.statusCode})' : body;
   }
 
   void _showIdPictureDialog(String imageUrl, String studentId) {
@@ -527,7 +562,7 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                                           children: [
                                             OutlinedButton(
                                               style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
-                                              onPressed: () => _rejectUser(userId),
+                                              onPressed: () => _rejectUser(userId, username),
                                               child: const Text("Reject"),
                                             ),
                                             const SizedBox(width: 8),
