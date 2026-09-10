@@ -314,9 +314,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.directions_walk, color: Colors.orange, size: 28),
+              Icon(Icons.directions_walk, color: Colors.grey.shade600, size: 28),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -340,7 +340,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.timer, size: 18, color: Colors.orange.shade800),
+                    Icon(Icons.timer, size: 18, color: Colors.grey.shade600),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -707,9 +707,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.group_add, color: isuGreen, size: 28),
+              Icon(Icons.group_add, color: Colors.grey.shade600, size: 28),
               SizedBox(width: 8),
               Text('Join a Class', style: TextStyle(fontWeight: FontWeight.bold)),
             ],
@@ -830,9 +830,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.logout, color: Colors.red, size: 26),
+            Icon(Icons.logout, color: Colors.grey.shade600, size: 26),
             SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -995,7 +995,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 ? 'Loading active session...'
                 : 'Use GPS to mark your attendance',
             icon: Icons.location_on,
-            iconColor: isuGreen,
+            iconColor: Colors.grey.shade600,
             onTap: _isOpeningCheckIn ? null : _openCurrentSessionCheckIn,
           ),
           const SizedBox(height: 12),
@@ -1008,7 +1008,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 : 'File an Excuse',
             subtitle: 'Can\'t attend an upcoming session? Submit an excuse letter',
             icon: Icons.drafts_outlined,
-            iconColor: Colors.blueAccent,
+            iconColor: Colors.grey.shade600,
             onTap: () => _openFileExcuseScreen(),
           ),
         ],
@@ -1073,7 +1073,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 ? 'You can only be in one class. Leave your current class first.'
                 : 'Enter a class code to join',
             icon: Icons.group_add,
-            iconColor: alreadyInAClass ? Colors.grey : Colors.blue,
+            iconColor: Colors.grey.shade600,
             onTap: alreadyInAClass ? null : _showJoinClassDialog,
           ),
           const SizedBox(height: 24),
@@ -1093,7 +1093,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
           title: 'Profile Details',
           subtitle: 'View your name, ID number, course, and component',
           icon: Icons.account_circle,
-          iconColor: isuGreen,
+          iconColor: Colors.grey.shade600,
           onTap: _showProfileView,
         ),
         const SizedBox(height: 16),
@@ -1104,7 +1104,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
           title: 'Log Out',
           subtitle: 'Sign out of your account',
           icon: Icons.logout,
-          iconColor: Colors.red,
+          iconColor: Colors.grey.shade600,
           onTap: () => LogoutHelper.confirmAndLogout(context),
         ),
       ],
@@ -1555,7 +1555,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
       children: [
         Row(
           children: [
-            const Icon(Icons.school, color: isuGreen, size: 20),
+            Icon(Icons.school, color: Colors.grey.shade600, size: 20),
             const SizedBox(width: 8),
             const Text(
               'My Classes',
@@ -1698,7 +1698,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
               IconButton(
                 icon: Icon(
                   Icons.login,
-                  color: canOpenCheckIn ? isuGreen : Colors.grey,
+                  color: Colors.grey.shade600,
                   size: 22,
                 ),
                 tooltip: 'Open check-in',
@@ -1717,7 +1717,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.logout, color: Colors.red, size: 22),
+                  : Icon(Icons.logout, color: Colors.grey.shade600, size: 22),
               tooltip: 'Leave Class',
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -1741,9 +1741,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
       builder: (dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.account_circle, color: isuGreen, size: 28),
+              Icon(Icons.account_circle, color: Colors.grey.shade600, size: 28),
               SizedBox(width: 8),
               Text('Profile Details', style: TextStyle(fontWeight: FontWeight.bold)),
             ],
@@ -1756,7 +1756,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
-                  leading: const Icon(Icons.lock_reset, color: isuGreen),
+                  leading: Icon(Icons.lock_reset, color: Colors.grey.shade600),
                   title: const Text(
                     'Change Password',
                     style: TextStyle(fontWeight: FontWeight.w600),
@@ -1907,7 +1907,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
           activeThumbColor: isuGreen,
           secondary: CircleAvatar(
             backgroundColor: isuGreen.withValues(alpha: 0.15),
-            child: const Icon(Icons.face_retouching_natural, color: isuGreen),
+            child: Icon(Icons.face_retouching_natural, color: Colors.grey.shade600),
           ),
           title: const Text(
             'Protect My Profile',
@@ -1962,7 +1962,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
       child: ListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        leading: Icon(icon, color: isuGreen),
+        leading: Icon(icon, color: Colors.grey.shade600),
         title: Text(
           label,
           style: const TextStyle(

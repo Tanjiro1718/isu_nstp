@@ -148,11 +148,10 @@ class _ExportMasterDataTab extends StatelessWidget {
                 Row(
                   children: [
                     CircleAvatar(
-                      backgroundColor:
-                          Colors.green.shade700.withValues(alpha: 0.15),
+                      backgroundColor: Colors.grey.shade200,
                       child: Icon(
                         Icons.download_for_offline,
-                        color: Colors.green.shade700,
+                        color: Colors.grey.shade600,
                       ),
                     ),
                     const SizedBox(width: 12),

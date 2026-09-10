@@ -152,7 +152,7 @@ class _FileExcuseScreenState extends State<FileExcuseScreen> {
           Center(
             child: Column(
               children: [
-                const Icon(Icons.event_available, size: 64, color: Colors.green),
+                Icon(Icons.event_available, size: 64, color: Colors.grey.shade600),
                 const SizedBox(height: 16),
                 const Text(
                   'No upcoming sessions',
@@ -185,7 +185,7 @@ class _FileExcuseScreenState extends State<FileExcuseScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, size: 20, color: Colors.blue.shade700),
+              Icon(Icons.info_outline, size: 20, color: Colors.grey.shade600),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -217,7 +217,7 @@ class _FileExcuseScreenState extends State<FileExcuseScreen> {
               ),
               leading: CircleAvatar(
                 backgroundColor: Colors.blue.withValues(alpha: 0.12),
-                child: const Icon(Icons.event, color: Colors.blueAccent),
+                child: Icon(Icons.event, color: Colors.grey.shade600),
               ),
               title: Text(
                 session['title']?.toString() ?? 'NSTP Activity',

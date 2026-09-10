@@ -289,7 +289,7 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.insights, color: isuGreen),
+                Icon(Icons.insights, color: Colors.grey.shade600),
                 const SizedBox(width: 8),
                 const Text(
                   'Overall',

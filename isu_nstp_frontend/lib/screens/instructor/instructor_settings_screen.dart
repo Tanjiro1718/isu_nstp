@@ -336,9 +336,9 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
             padding: const EdgeInsets.only(top: 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Icon(Icons.info_outline, size: 18, color: Colors.orange),
-                SizedBox(width: 6),
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Colors.grey.shade600),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     'No random presence checks for this session. Students just '

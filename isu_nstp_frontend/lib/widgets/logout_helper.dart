@@ -18,9 +18,9 @@ class LogoutHelper {
       context: context,
       builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.logout, color: Colors.red, size: 26),
+            Icon(Icons.logout, color: Colors.grey.shade600, size: 26),
             SizedBox(width: 8),
             Expanded(
               child: Text(

@@ -417,7 +417,7 @@ class _DirectorOversightScreenState extends State<DirectorOversightScreen>
               // The assignment the director came here to see.
               Row(
                 children: [
-                  const Icon(Icons.person, size: 15, color: Colors.blueGrey),
+                  Icon(Icons.person, size: 15, color: Colors.grey.shade600),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(

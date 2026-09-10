@@ -229,7 +229,7 @@ class ChangePasswordFlow {
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.lock_reset, color: isuGreen),
+                        Icon(Icons.lock_reset, color: Colors.grey.shade600),
                         const SizedBox(width: 8),
                         Text(
                           step == 1 ? 'Change Password' : 'Enter Code',
@@ -302,7 +302,7 @@ class ChangePasswordFlow {
                                 labelText: 'Current Password',
                                 border: const OutlineInputBorder(),
                                 prefixIcon:
-                                    const Icon(Icons.lock_outline, color: isuGreen),
+                                    Icon(Icons.lock_outline, color: Colors.grey.shade600),
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     obscureCurrent
@@ -322,10 +322,10 @@ class ChangePasswordFlow {
                             TextFormField(
                               controller: emailController,
                               keyboardType: TextInputType.emailAddress,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'Account Email',
                                 border: OutlineInputBorder(),
-                                prefixIcon: Icon(Icons.email, color: isuGreen),
+                                prefixIcon: Icon(Icons.email, color: Colors.grey.shade600),
                               ),
                               validator: (v) {
                                 final email = (v ?? '').trim();
@@ -358,11 +358,11 @@ class ChangePasswordFlow {
                             TextFormField(
                               controller: codeController,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'Verification Code',
                                 hintText: 'e.g. 123456',
                                 border: OutlineInputBorder(),
-                                prefixIcon: Icon(Icons.pin, color: isuGreen),
+                                prefixIcon: Icon(Icons.pin, color: Colors.grey.shade600),
                               ),
                               validator: (v) => (v == null || v.trim().isEmpty)
                                   ? 'Enter the 6-digit code.'
@@ -375,7 +375,7 @@ class ChangePasswordFlow {
                               decoration: InputDecoration(
                                 labelText: 'New Password',
                                 border: const OutlineInputBorder(),
-                                prefixIcon: const Icon(Icons.lock, color: isuGreen),
+                                prefixIcon: Icon(Icons.lock, color: Colors.grey.shade600),
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     obscureNew
@@ -398,11 +398,11 @@ class ChangePasswordFlow {
                             TextFormField(
                               controller: confirmPasswordController,
                               obscureText: obscureNew,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'Confirm New Password',
                                 border: OutlineInputBorder(),
                                 prefixIcon:
-                                    Icon(Icons.lock_outline, color: isuGreen),
+                                    Icon(Icons.lock_outline, color: Colors.grey.shade600),
                               ),
                               validator: (v) => v != newPasswordController.text
                                   ? 'Passwords do not match.'

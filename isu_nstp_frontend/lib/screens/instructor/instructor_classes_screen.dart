@@ -155,7 +155,7 @@ class _ClassCard extends StatelessWidget {
                       color: Colors.blueAccent.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.school, color: Colors.blueAccent),
+                    child: Icon(Icons.school, color: Colors.grey.shade600),
                   ),
                   const SizedBox(width: 14),
                   Expanded(

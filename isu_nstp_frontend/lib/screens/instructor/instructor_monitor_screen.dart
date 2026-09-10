@@ -374,7 +374,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.directions_walk, color: Colors.orange.shade700),
+                Icon(Icons.directions_walk, color: Colors.grey.shade600),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -1077,8 +1077,8 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.fact_check_outlined,
-                          size: 18, color: Colors.orange),
+                      Icon(Icons.fact_check_outlined,
+                          size: 18, color: Colors.grey.shade600),
                       const SizedBox(width: 8),
                       const Expanded(
                         child: Text(
@@ -1353,7 +1353,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                             title: 'Attendance Records',
                             value: '${filteredLogs.length} Submissions',
                             icon: Icons.assignment_ind,
-                            color: Colors.blue,
+                            color: Colors.grey.shade600,
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -1362,7 +1362,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                             title: 'Picture Submissions',
                             value: '$photoCount Photos',
                             icon: Icons.image_search,
-                            color: Colors.teal,
+                            color: Colors.grey.shade600,
                           ),
                         ),
                       ],
@@ -1441,7 +1441,7 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
                               child: Row(
                                 children: [
                                   Icon(Icons.assignment_ind,
-                                      size: 20, color: Colors.blue.shade700),
+                                      size: 20, color: Colors.grey.shade600),
                                   const SizedBox(width: 8),
                                   const Expanded(
                                     child: Text(

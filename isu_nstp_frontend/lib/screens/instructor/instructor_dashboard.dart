@@ -157,9 +157,9 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.account_circle, color: isuGreen, size: 28),
+              Icon(Icons.account_circle, color: Colors.grey.shade600, size: 28),
               SizedBox(width: 8),
               Text(
                 'Profile Details',
@@ -174,7 +174,7 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
                 _buildProfileLockCard(),
                 const Divider(height: 24),
                 ListTile(
-                  leading: const Icon(Icons.lock_reset, color: isuGreen),
+                  leading: Icon(Icons.lock_reset, color: Colors.grey.shade600),
                   title: const Text(
                     'Change Password',
                     style: TextStyle(fontWeight: FontWeight.w600),
@@ -291,9 +291,9 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
           activeThumbColor: isuGreen,
           secondary: CircleAvatar(
             backgroundColor: isuGreen.withValues(alpha: 0.15),
-            child: const Icon(
+            child: Icon(
               Icons.face_retouching_natural,
-              color: isuGreen,
+              color: Colors.grey.shade600,
             ),
           ),
           title: const Text(
@@ -323,7 +323,7 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
       child: ListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        leading: Icon(icon, color: isuGreen),
+        leading: Icon(icon, color: Colors.grey.shade600),
         title: Text(
           label,
           style: const TextStyle(

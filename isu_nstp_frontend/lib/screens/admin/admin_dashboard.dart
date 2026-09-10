@@ -64,7 +64,7 @@ class AdminDashboard extends StatelessWidget {
               title: 'Manage Users & Roles',
               subtitle: 'Add, edit, approve, or remove accounts across all roles',
               icon: Icons.manage_accounts,
-              iconColor: Colors.deepPurple,
+              iconColor: Colors.grey.shade600,
               onTap: () {
                 Navigator.push(
                   context,

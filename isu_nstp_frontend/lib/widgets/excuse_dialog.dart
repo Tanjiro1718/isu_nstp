@@ -222,9 +222,9 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      title: const Row(
+      title: Row(
         children: [
-          Icon(Icons.drafts_outlined, color: isuGreen),
+          Icon(Icons.drafts_outlined, color: Colors.grey.shade600),
           SizedBox(width: 8),
           Expanded(child: Text('File an excuse', style: TextStyle(fontSize: 18))),
         ],
@@ -294,7 +294,7 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
                 ),
                 child: Row(
                   children: [
-                    Icon(_fileIcon(_selectedFileName), size: 20, color: isuGreen),
+                    Icon(_fileIcon(_selectedFileName), size: 20, color: Colors.grey.shade600),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -306,7 +306,7 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
                     if (!_submitting)
                       GestureDetector(
                         onTap: _removeFile,
-                        child: Icon(Icons.close, size: 18, color: Colors.red.shade400),
+                        child: Icon(Icons.close, size: 18, color: Colors.grey.shade600),
                       ),
                   ],
                 ),

@@ -401,7 +401,7 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                               backgroundColor: cannotDelete ? Colors.blue.shade100 : Colors.deepPurple.shade100,
                               child: Icon(
                                 cannotDelete ? Icons.admin_panel_settings : Icons.person,
-                                color: cannotDelete ? Colors.blue : Colors.deepPurple,
+                                color: Colors.grey.shade600,
                               ),
                             ),
                             title: Row(
@@ -434,12 +434,12 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                               ],
                             ),
                             trailing: cannotDelete
-                                ? const Tooltip(
+                                ? Tooltip(
                                     message: "Admin deletion is disabled to prevent system lockout.",
-                                    child: Padding(padding: EdgeInsets.all(8.0), child: Icon(Icons.shield, color: Colors.blueAccent)),
+                                    child: Padding(padding: EdgeInsets.all(8.0), child: Icon(Icons.shield, color: Colors.grey.shade600)),
                                   )
                                 : IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    icon: Icon(Icons.delete, color: Colors.grey.shade600),
                                     onPressed: () {
                                       showDialog(
                                         context: context,
@@ -527,7 +527,7 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                                   children: [
                                     Row(
                                       children: [
-                                        const Icon(Icons.person, color: Colors.deepPurple),
+                                        Icon(Icons.person, color: Colors.grey.shade600),
                                         const SizedBox(width: 8),
                                         Text(username, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                                       ],

@@ -593,7 +593,7 @@ class _InstructorExcusesScreenState extends State<InstructorExcusesScreen> {
                   ? Icons.picture_as_pdf
                   : Icons.description,
               size: 20,
-              color: Colors.blue.shade700,
+              color: Colors.grey.shade600,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -602,12 +602,12 @@ class _InstructorExcusesScreenState extends State<InstructorExcusesScreen> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: Colors.blue.shade700,
+                  color: Colors.grey.shade700,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            Icon(Icons.open_in_new, size: 16, color: Colors.blue.shade400),
+            Icon(Icons.open_in_new, size: 16, color: Colors.grey.shade600),
           ],
         ),
       ),
