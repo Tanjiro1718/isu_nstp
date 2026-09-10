@@ -179,3 +179,80 @@ class ResendVerificationCodeTests(RegisterFastFlowTestBase):
             format='json',
         )
         self.assertEqual(response.status_code, 404)
+
+
+ADMIN_NOTIFY = 'attendance.views.send_new_registration_pending'
+
+
+def _wait_until(predicate, timeout=1.0, interval=0.005):
+    """Daemon notification threads race tests; poll until the mock fires."""
+    import time
+
+    elapsed = 0.0
+    while elapsed < timeout:
+        if predicate():
+            return True
+        time.sleep(interval)
+        elapsed += interval
+    return False
+
+
+class AdminPendingNotificationTests(RegisterFastFlowTestBase):
+    """Admins get a push the moment an account becomes truly pending, i.e.
+    only after the student verifies their email and exactly once."""
+
+    def _verify(self, email='fast_stu@isu.edu.ph'):
+        code = OTPVerification.objects.get(email=email).code
+        return self.client.post(
+            '/api/verify-code/',
+            {'email': email, 'otp_code': code},
+            format='json',
+        )
+
+    @patch(ADMIN_NOTIFY)
+    @patch('attendance.views.EmailMultiAlternatives.send', return_value=1)
+    def test_verify_code_dispatches_admin_push_once(self, mock_email, mock_notify):
+        self.assertEqual(self._register().status_code, 201)
+
+        response = self._verify()
+        self.assertEqual(response.status_code, 200, response.data)
+
+        self.assertTrue(_wait_until(lambda: mock_notify.called))
+        mock_notify.assert_called_once_with('fast_stu', 'fast_stu@isu.edu.ph')
+
+    @patch(ADMIN_NOTIFY)
+    @patch('attendance.views.EmailMultiAlternatives.send', return_value=1)
+    def test_registration_alone_does_not_notify_admins(self, mock_email, mock_notify):
+        self.assertEqual(self._register().status_code, 201)
+        # The account is only saved now; nothing should have fired yet.
+        self.assertFalse(_wait_until(lambda: mock_notify.called, timeout=0.2))
+
+    @patch(ADMIN_NOTIFY)
+    def test_re_verifying_an_owned_email_does_not_notify_again(self, mock_notify):
+        # Simulate an email that was verified earlier (e.g. a stale OTP retry).
+        user = User.objects.create(
+            email='owned@isu.edu.ph',
+            username='owned_stu',
+            first_name='Own',
+            last_name='Er',
+            is_active=False,
+        )
+        user.set_password(PASSWORD)
+        user.save()
+        StudentProfile.objects.create(
+            user=user,
+            student_id='22-11111',
+            component='ROTC',
+            section_code='1B',
+            course_and_section='ROTC 1B',
+            is_email_verified=True,
+        )
+        OTPVerification.objects.create(email='owned@isu.edu.ph', code='000000')
+
+        response = self.client.post(
+            '/api/verify-code/',
+            {'email': 'owned@isu.edu.ph', 'otp_code': '000000'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(_wait_until(lambda: mock_notify.called, timeout=0.2))

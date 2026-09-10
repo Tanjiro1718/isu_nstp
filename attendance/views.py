@@ -51,6 +51,7 @@ from django.db import transaction
 from rest_framework import status, views
 from .fcm_utils import (
     send_approval_notification,
+    send_new_registration_pending,
     notify_check_out_open,
     send_password_reset_code,
     send_change_password_code,
@@ -105,6 +106,16 @@ def _resend_registration_email(email, otp_code):
         args=(email, otp_code),
         daemon=True,
     ).start()
+
+
+def _notify_admins_of_pending(username, email):
+    """Fire-and-forget push to admins when an account becomes truly pending
+    (email verified, still waiting for approval). Never blocks the student's
+    verify-code response on the FCM network call."""
+    try:
+        send_new_registration_pending(username, email)
+    except Exception as push_err:
+        print(f"❌ Pending-registration admin push failed: {push_err}")
 
 
 def _send_approval_email(email, username, approved):
@@ -382,6 +393,13 @@ class VerifyOTPAPIView(APIView):
                     if profile is not None and not profile.is_email_verified:
                         profile.is_email_verified = True
                         profile.save(update_fields=['is_email_verified'])
+                        # The account just became truly pending: tell the admins
+                        # who approve or reject it, without delaying this response.
+                        threading.Thread(
+                            target=_notify_admins_of_pending,
+                            args=(user.username, email),
+                            daemon=True,
+                        ).start()
                 except Exception as verify_err:
                     print(f"❌ Could not stamp is_email_verified for {email}: {verify_err}")
                 return Response({'message': 'Code verified successfully!'}, status=status.HTTP_200_OK)

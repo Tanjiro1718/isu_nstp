@@ -60,6 +60,55 @@ def send_approval_notification(fcm_token: str, is_approved: bool, username: str)
         return False
 
 
+def send_new_registration_pending(username: str, email: str):
+    """
+    Notifies every admin (role='admin' or is_staff) that a newly registered
+    account has passed email verification and is now waiting for approval.
+    """
+    if not firebase_admin._apps:
+        print("Firebase is not initialized. Cannot send push notification.")
+        return False
+
+    from django.db.models import Q
+    from attendance.models import User
+
+    tokens = (
+        User.objects.filter(
+            Q(role='admin') | Q(is_staff=True),
+            fcm_token__isnull=False,
+        )
+        .exclude(fcm_token='')
+        .values_list('fcm_token', flat=True)
+    )
+
+    if not tokens:
+        print("No admin FCM tokens found. Pending-registration notification skipped.")
+        return False
+
+    title = "New Account Pending Approval"
+    body = f"{username} ({email}) verified their email and is waiting for your approval."
+
+    sent = 0
+    for token in tokens:
+        try:
+            messaging.send(
+                messaging.Message(
+                    notification=messaging.Notification(title=title, body=body),
+                    data={
+                        "type": "new_registration_pending",
+                        "status": "pending",
+                    },
+                    token=token,
+                )
+            )
+            sent += 1
+        except Exception as e:
+            print(f"Error sending pending-registration FCM message to an admin: {e}")
+
+    print(f"Sent pending-registration notification to {sent} admin device(s).")
+    return sent > 0
+
+
 def _urgent_android():
     """
     Android config for time-critical pushes.
