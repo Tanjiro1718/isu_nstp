@@ -13,6 +13,7 @@ class ClassModel {
   final int pendingCount;
   final String createdAt;
   final List<ClassMember>? members;
+  final SessionSummary? nextSession;
 
   ClassModel({
     required this.id,
@@ -29,6 +30,7 @@ class ClassModel {
     required this.pendingCount,
     required this.createdAt,
     this.members,
+    this.nextSession,
   });
 
   factory ClassModel.fromJson(Map<String, dynamic> json) {
@@ -51,7 +53,58 @@ class ClassModel {
               .map((m) => ClassMember.fromJson(m))
               .toList()
           : null,
+      nextSession: json['next_session'] != null
+          ? SessionSummary.fromJson(json['next_session'])
+          : null,
     );
+  }
+}
+
+/// The next upcoming attendance session scheduled for a class, used to tell
+/// the instructor at a glance that a session has been created.
+class SessionSummary {
+  final int id;
+  final String title;
+  final DateTime? dateTime;
+
+  const SessionSummary({
+    required this.id,
+    required this.title,
+    required this.dateTime,
+  });
+
+  factory SessionSummary.fromJson(Map<String, dynamic> json) {
+    return SessionSummary(
+      id: json['id'] ?? 0,
+      title: json['title'] ?? '',
+      dateTime: json['date_time'] != null
+          ? DateTime.tryParse(json['date_time'].toString())
+          : null,
+    );
+  }
+
+  /// Short human label like "Today 8:00 AM", "Tomorrow 8:00 AM" or
+  /// "Sep 12, 8:00 AM", so the session pill stays compact.
+  String get shortLabel {
+    final dt = dateTime?.toLocal();
+    if (dt == null) return 'scheduled';
+
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(dt.year, dt.month, dt.day);
+
+    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = dt.hour < 12 ? 'AM' : 'PM';
+    final time = '$hour12:$minute $period';
+
+    if (day == today) return 'Today $time';
+    if (day == today.add(const Duration(days: 1))) return 'Tomorrow $time';
+    return '${months[dt.month - 1]} ${dt.day}, $time';
   }
 }
 

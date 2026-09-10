@@ -22,6 +22,9 @@ class InstructorDashboard extends StatefulWidget {
 
 class _InstructorDashboardState extends State<InstructorDashboard> {
   int _currentIndex = 0;
+  /// Fires on every tab tap so kept-alive tabs (e.g. My Classes) can refresh
+  /// their data when they become visible again.
+  final ValueNotifier<int> _selectedTab = ValueNotifier<int>(0);
 
   /// Shown in the AppBar so the bar still says where you are once the cards
   /// that used to carry those labels are gone.
@@ -55,12 +58,14 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
     if (request == null || request.tabIndex == _currentIndex) return;
     instructorNavRequests.value = null;
     if (!mounted) return;
+    _selectedTab.value = request.tabIndex;
     setState(() => _currentIndex = request.tabIndex);
   }
 
   @override
   void dispose() {
     instructorNavRequests.removeListener(_onNavRequest);
+    _selectedTab.dispose();
     super.dispose();
   }
 
@@ -396,13 +401,21 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
               InstructorMonitorScreen(instructor: widget.user, embedded: true),
           (_) =>
               ClassAttendanceRecordsScreen(user: widget.user, embedded: true),
-          (_) => InstructorClassesScreen(user: widget.user, embedded: true),
+          (_) => InstructorClassesScreen(
+                user: widget.user,
+                embedded: true,
+                tabSwitch: _selectedTab,
+                tabIndex: 3,
+              ),
           (_) => InstructorExcusesScreen(user: widget.user, embedded: true),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
+        onTap: (index) {
+          setState(() => _currentIndex = index);
+          _selectedTab.value = index;
+        },
         type: BottomNavigationBarType.fixed,
         backgroundColor: Colors.white,
         selectedItemColor: Colors.black87,

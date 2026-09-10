@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
+from django.utils import timezone
 from .models import (
     User,
     AttendanceSession,
@@ -360,6 +361,7 @@ class ClassGroupSerializer(serializers.ModelSerializer):
     pending_count = serializers.SerializerMethodField()
     invite_link = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(format='%m/%d/%Y', read_only=True)
+    next_session = serializers.SerializerMethodField()
 
     class Meta:
         model = ClassGroup
@@ -378,6 +380,7 @@ class ClassGroupSerializer(serializers.ModelSerializer):
             'student_count',
             'pending_count',
             'created_at',
+            'next_session',
         ]
         read_only_fields = ['join_code', 'invite_link', 'created_at']
 
@@ -393,6 +396,22 @@ class ClassGroupSerializer(serializers.ModelSerializer):
         if request is not None:
             return request.build_absolute_uri(path)
         return path
+
+    def get_next_session(self, obj):
+        """The next upcoming session for this class, so the instructor can see
+        at a glance that one is scheduled. Past/ended sessions don't count."""
+        upcoming = (
+            obj.attendance_sessions.filter(date_time__gt=timezone.now())
+            .order_by('date_time')
+            .first()
+        )
+        if upcoming is None:
+            return None
+        return {
+            'id': upcoming.id,
+            'title': upcoming.title,
+            'date_time': upcoming.date_time.isoformat(),
+        }
 
 
 class ClassGroupDetailSerializer(ClassGroupSerializer):

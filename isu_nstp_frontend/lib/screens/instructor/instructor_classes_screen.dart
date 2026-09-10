@@ -10,11 +10,19 @@ class InstructorClassesScreen extends StatefulWidget {
   /// True when the screen is shown as a tab inside a dashboard. It then drops
   /// its own AppBar so the parent's bar is the only one on screen.
   final bool embedded;
+  /// When embedded, the dashboard's selected-tab notifier. Re-selecting this
+  /// tab refreshes the list, so a session created on another tab shows up
+  /// without a manual pull-to-refresh.
+  final ValueNotifier<int>? tabSwitch;
+  /// The tab index this screen occupies in the bottom navigator.
+  final int tabIndex;
 
   const InstructorClassesScreen({
     super.key,
     required this.user,
     this.embedded = false,
+    this.tabSwitch,
+    this.tabIndex = 0,
   });
 
   @override
@@ -24,14 +32,31 @@ class InstructorClassesScreen extends StatefulWidget {
 
 class _InstructorClassesScreenState extends State<InstructorClassesScreen> {
   late Future<List<ClassModel>> _classesFuture;
+  bool _hasFetchedOnce = false;
 
   @override
   void initState() {
     super.initState();
     _loadClasses();
+    widget.tabSwitch?.addListener(_maybeRefreshOnTabSwitch);
+  }
+
+  @override
+  void dispose() {
+    widget.tabSwitch?.removeListener(_maybeRefreshOnTabSwitch);
+    super.dispose();
+  }
+
+  void _maybeRefreshOnTabSwitch() {
+    // Re-selecting this tab after the first load refreshes silently, so the
+    // class list reflects sessions created elsewhere in the dashboard.
+    if (widget.tabSwitch?.value == widget.tabIndex && _hasFetchedOnce) {
+      _refresh();
+    }
   }
 
   void _loadClasses() {
+    _hasFetchedOnce = true;
     _classesFuture = ClassService.fetchInstructorClasses(widget.user.id);
   }
 
@@ -192,29 +217,34 @@ class _ClassCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
+                  if (classGroup.nextSession != null)
+                    _Pill(
+                      icon: Icons.event,
+                      label:
+                          'Session: ${classGroup.nextSession!.shortLabel}',
+                      color: Colors.green,
+                    ),
                   _Pill(
                     icon: Icons.people_alt_outlined,
                     label: '${classGroup.studentCount} students',
                     color: Colors.green,
                   ),
-                  if (classGroup.pendingCount > 0) ...[
-                    const SizedBox(width: 8),
+                  if (classGroup.pendingCount > 0)
                     _Pill(
                       icon: Icons.hourglass_top,
                       label: '${classGroup.pendingCount} pending',
                       color: Colors.orange,
                     ),
-                  ],
-                  if (!classGroup.isJoinEnabled) ...[
-                    const SizedBox(width: 8),
+                  if (!classGroup.isJoinEnabled)
                     const _Pill(
                       icon: Icons.lock_outline,
                       label: 'Closed',
                       color: Colors.red,
                     ),
-                  ],
                 ],
               ),
               const SizedBox(height: 12),
