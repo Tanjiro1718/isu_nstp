@@ -15,12 +15,12 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from rest_framework.routers import DefaultRouter
 from attendance.views import UserViewSet, invite_landing_page
 from django.conf import settings
-from django.conf.urls.static import static
 from attendance.views import privacy_policy, account_deletion_page, terms_and_conditions
+from django.views.static import serve
 
 
 router = DefaultRouter()
@@ -39,6 +39,10 @@ urlpatterns = [
 ]
 
 
-# Serves uploaded ID images during development
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serves uploaded ID images (student IDs, selfies, excuses) whenever they live
+# on the local filesystem - development AND production, since Django only adds
+# the media route automatically under DEBUG. Skipped once Supabase Storage is
+# enabled (STORAGES['default'] switches to S3), where image URLs are absolute
+# Supabase object URLs that never touch /media/.
+if settings.STORAGES['default'].get('BACKEND') == 'django.core.files.storage.FileSystemStorage':
+    urlpatterns += [re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT})]
