@@ -103,6 +103,10 @@ class UserSerializer(serializers.ModelSerializer):
         rep['middle_name'] = getattr(instance, 'middle_name', None)
         rep['last_name'] = instance.last_name
         rep['date_joined'] = instance.date_joined.isoformat() if instance.date_joined else None
+        # When the user accepted the legal documents. Null = hasn't accepted
+        # yet (legacy accounts) -> the app must prompt before proceeding.
+        rep['accepted_terms_at'] = instance.accepted_terms_at.isoformat() if getattr(instance, 'accepted_terms_at', None) else None
+        rep['accepted_privacy_at'] = instance.accepted_privacy_at.isoformat() if getattr(instance, 'accepted_privacy_at', None) else None
 
         return rep
 

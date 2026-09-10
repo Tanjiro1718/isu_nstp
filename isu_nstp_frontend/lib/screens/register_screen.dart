@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../config/api_config.dart';
 import '../services/notification_service.dart';
 import '../utils/password_policy.dart';
@@ -37,6 +38,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _isWaitingForOtp = false;
+  bool _acceptTerms = false;
 
   File? _idImageFile;
   final ImagePicker _picker = ImagePicker();
@@ -76,9 +78,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  Future<void> _openUrl(Uri uri) async {
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open the link.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   // --- Step 1: Submit Registration Data & Request OTP ---
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
+
+    if (!_acceptTerms) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please accept the Privacy Policy and Terms & Conditions to continue.'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
     if (_idImageFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -116,6 +142,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       
       // 🟢 ATTACH FCM TOKEN TO MULTIPART FIELDS
       request.fields['fcm_token'] = fcmToken ?? '';
+
+      // Consent to the Privacy Policy and Terms, exactly as ticked above.
+      request.fields['accept_terms'] = _acceptTerms ? 'true' : 'false';
 
       // File payload
       request.files.add(await http.MultipartFile.fromPath(
@@ -566,6 +595,50 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
           const SizedBox(height: 32),
+
+          // 10. Consent to Privacy Policy & Terms
+          CheckboxListTile(
+            value: _acceptTerms,
+            onChanged: (value) => setState(() => _acceptTerms = value ?? false),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: Text(
+              'I agree to the Privacy Policy and Terms & Conditions',
+              style: const TextStyle(fontSize: 13.5, color: isuDarkGreen),
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    'I have read the ',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                  ),
+                  GestureDetector(
+                    onTap: () => _openUrl(ApiConfig.privacyPolicyUri),
+                    child: const Text(
+                      'Privacy Policy',
+                      style: TextStyle(fontSize: 13, color: isuGreen, decoration: TextDecoration.underline),
+                    ),
+                  ),
+                  Text(
+                    ' and ',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                  ),
+                  GestureDetector(
+                    onTap: () => _openUrl(ApiConfig.termsUri),
+                    child: const Text(
+                      'Terms & Conditions',
+                      style: TextStyle(fontSize: 13, color: isuGreen, decoration: TextDecoration.underline),
+                    ),
+                  ),
+                  Text('.', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
 
           // Submit / Continue Button
           SizedBox(

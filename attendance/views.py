@@ -69,6 +69,9 @@ User = get_user_model()
 def privacy_policy(request):
     return render(request, "attendance/privacy_policy.html")
 
+def terms_and_conditions(request):
+    return render(request, "attendance/terms_and_conditions.html")
+
 def generate_otp():
     """Helper function to generate a random 6-digit OTP code."""
     return str(random.randint(100000, 999999))
@@ -120,6 +123,14 @@ class RegisterView(APIView):
         if User.objects.filter(email=email).exists():
             return Response({'detail': 'An account with this email already exists.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # New students must consent to the Privacy Policy and Terms before we
+        # create the account. Mirrors the checkbox on the registration screen.
+        if str(request.data.get('accept_terms', '')).strip().lower() not in ('true', '1', 'yes', 'on'):
+            return Response(
+                {'detail': 'You must accept the Privacy Policy and Terms & Conditions to continue.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             with transaction.atomic():
                 # 1. SAVE THE USER 
@@ -129,7 +140,9 @@ class RegisterView(APIView):
                     first_name=first_name,
                     middle_name=middle_name,
                     last_name=last_name,
-                    is_active=False 
+                    is_active=False,
+                    accepted_terms_at=timezone.now(),
+                    accepted_privacy_at=timezone.now(),
                 )
                 user.set_password(password)
                 user.save()
@@ -3652,6 +3665,54 @@ class EditProfileAPIView(APIView):
         return Response(
             {
                 'message': 'Profile updated successfully.',
+                'user': response_data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ConsentAPIView(APIView):
+    """
+    Records that the user accepted the Privacy Policy and Terms & Conditions.
+
+    New students consent at registration. Existing accounts (and staff created
+    before this feature existed) use this endpoint from the one-time consent
+    sheet shown after login. Matches the app's proof pattern (user_id +
+    current password, no bearer tokens).
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        password = request.data.get('current_password') or ''
+
+        if not user_id or not password:
+            return Response(
+                {'detail': 'user_id and current_password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not user.check_password(password):
+            return Response(
+                {'detail': 'Incorrect password. Please sign in again.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if user.accepted_terms_at is None:
+            user.accepted_terms_at = timezone.now()
+        if user.accepted_privacy_at is None:
+            user.accepted_privacy_at = timezone.now()
+        user.save(update_fields=['accepted_terms_at', 'accepted_privacy_at'])
+
+        response_data = UserSerializer(user, context={'request': request}).data
+        return Response(
+            {
+                'message': 'Thank you for accepting the Privacy Policy and Terms & Conditions.',
                 'user': response_data,
             },
             status=status.HTTP_200_OK,

@@ -17,6 +17,8 @@ class UserModel {
   final String? department;
   final String? idPictureUrl;
   final String? dateJoined;
+  final String? acceptedTermsAt;
+  final String? acceptedPrivacyAt;
   final bool isEmailVerified;
   final bool isApprovedByAdmin;
 
@@ -37,6 +39,8 @@ class UserModel {
     this.department,
     this.idPictureUrl,
     this.dateJoined,
+    this.acceptedTermsAt,
+    this.acceptedPrivacyAt,
     this.isEmailVerified = false,
     this.isApprovedByAdmin = false,
   });
@@ -48,6 +52,11 @@ class UserModel {
         .map((p) => p!.trim());
     return parts.isEmpty ? username : parts.join(' ');
   }
+
+  /// Whether both legal documents have been accepted on the server.
+  /// Legacy accounts (created before consent existed) have null timestamps.
+  bool get hasAcceptedPolicies =>
+      acceptedTermsAt != null && acceptedPrivacyAt != null;
 
   /// Factory constructor with full null-safety and dynamic type parsing
   factory UserModel.fromJson(Map<String, dynamic>? json) {
@@ -84,6 +93,8 @@ class UserModel {
       department: json['department']?.toString(),
       idPictureUrl: json['id_picture_front']?.toString(),
       dateJoined: json['date_joined']?.toString(),
+      acceptedTermsAt: json['accepted_terms_at']?.toString(),
+      acceptedPrivacyAt: json['accepted_privacy_at']?.toString(),
       isEmailVerified: asBool(json['is_email_verified']),
       isApprovedByAdmin: asBool(json['is_approved_by_admin']),
     );
@@ -108,6 +119,8 @@ class UserModel {
       'department': department,
       'id_picture_front': idPictureUrl,
       'date_joined': dateJoined,
+      'accepted_terms_at': acceptedTermsAt,
+      'accepted_privacy_at': acceptedPrivacyAt,
       'is_email_verified': isEmailVerified,
       'is_approved_by_admin': isApprovedByAdmin,
     };
@@ -131,6 +144,8 @@ class UserModel {
     String? department,
     String? idPictureUrl,
     String? dateJoined,
+    String? acceptedTermsAt,
+    String? acceptedPrivacyAt,
     bool? isEmailVerified,
     bool? isApprovedByAdmin,
   }) {
@@ -151,6 +166,8 @@ class UserModel {
       department: department ?? this.department,
       idPictureUrl: idPictureUrl ?? this.idPictureUrl,
       dateJoined: dateJoined ?? this.dateJoined,
+      acceptedTermsAt: acceptedTermsAt ?? this.acceptedTermsAt,
+      acceptedPrivacyAt: acceptedPrivacyAt ?? this.acceptedPrivacyAt,
       isEmailVerified: isEmailVerified ?? this.isEmailVerified,
       isApprovedByAdmin: isApprovedByAdmin ?? this.isApprovedByAdmin,
     );

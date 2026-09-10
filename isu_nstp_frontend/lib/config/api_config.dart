@@ -15,6 +15,13 @@ class ApiConfig {
   static String get attendanceLogsUrl => '$baseUrl/api/attendance/logs/';
   static String get currentSessionUrl => '$baseUrl/api/attendance/session/current/';
 
+  /// User accepts the Privacy Policy and Terms from the in-app consent sheet.
+  static String get consentUrl => '$baseUrl/api/consent/';
+
+  /// Public legal documents shown in the consent dialogs and the Login footer.
+  static Uri get privacyPolicyUri => Uri.parse('$baseUrl/privacy-policy/');
+  static Uri get termsUri => Uri.parse('$baseUrl/terms-conditions/');
+
   /// Latest session limited to the classes this student actually joined.
   static String currentSessionForStudentUrl(int studentUserId, {int? classId}) {
     final classFilter = classId != null ? '&class_group_id=$classId' : '';

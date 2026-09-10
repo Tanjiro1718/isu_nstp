@@ -38,6 +38,12 @@ class User(AbstractUser):
     # so instructors, directors, and admins can be notified too.
     fcm_token = models.CharField(max_length=512, blank=True, null=True)
 
+    # When the user accepted the Privacy Policy and Terms & Conditions.
+    # Null means they have not accepted yet (existing accounts) - the app
+    # shows a one-time consent prompt until both are stamped.
+    accepted_terms_at = models.DateTimeField(blank=True, null=True)
+    accepted_privacy_at = models.DateTimeField(blank=True, null=True)
+
     @property
     def push_token(self):
         """

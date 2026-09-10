@@ -49,6 +49,7 @@ from .views import (
     UpcomingSessionsForStudentAPIView,
     RequestAccountDeletionAPIView,
     EditProfileAPIView,
+    ConsentAPIView,
 )
 
 
@@ -130,6 +131,9 @@ urlpatterns = [
 
     # 8. Self-service profile edits (instructor / director / admin, not student)
     path('edit-profile/', EditProfileAPIView.as_view(), name='api-edit-profile'),
+
+    # 9. Record acceptance of the Privacy Policy + Terms & Conditions.
+    path('consent/', ConsentAPIView.as_view(), name='api-consent'),
 
     # 6. Router endpoints (/users/)
     path('', include(router.urls)), 

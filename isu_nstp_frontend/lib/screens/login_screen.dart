@@ -2,6 +2,7 @@ import 'dart:async'; // ⏱️ Handles TimeoutExceptions
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/user_model.dart';
 import '../config/api_config.dart';
@@ -74,7 +75,33 @@ class _LoginScreenState extends State<LoginScreen> {
                 ? responseData['user'] as Map<String, dynamic>
                 : responseData;
 
-        final user = UserModel.fromJson(userMap);
+        var user = UserModel.fromJson(userMap);
+
+        // First-use consent gate. Legacy / staff accounts created before the
+        // Privacy Policy and Terms existed have null timestamps, so the app
+        // asks once before opening the dashboard and stamps acceptance on
+        // the server. Declining keeps the user on the login screen.
+        if (!user.hasAcceptedPolicies) {
+          final agreed = await _showConsentSheet();
+          if (!agreed) {
+            await SessionService.clear();
+            _showSnackBar(
+              'You need to accept the Privacy Policy and Terms & Conditions to continue.',
+              Colors.red,
+            );
+            if (!mounted) return;
+            setState(() => _isLoading = false);
+            return;
+          }
+
+          final updatedUser = await _submitConsent(user, _passwordController.text);
+          if (updatedUser == null) {
+            if (!mounted) return;
+            setState(() => _isLoading = false);
+            return;
+          }
+          user = updatedUser;
+        }
 
         await SessionService.saveUser(user);
         if (!mounted) return;
@@ -460,6 +487,160 @@ class _LoginScreenState extends State<LoginScreen> {
     confirmPasswordController.dispose();
   }
 
+  /// One-time consent sheet shown right after a successful login for accounts
+  /// that have not accepted the Privacy Policy / Terms yet (legacy accounts).
+  /// Returns true when the user tapped "I Agree".
+  Future<bool> _showConsentSheet() async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.gavel, color: isuGreen),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Accept Terms & Conditions',
+                    style: TextStyle(
+                      color: isuDarkGreen,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Before you continue using ISU NSTP Portal, please read and accept the following documents:",
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 16),
+                  GestureDetector(
+                    onTap: () => _openUrl(ApiConfig.privacyPolicyUri),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.policy_outlined, size: 18, color: isuGreen),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Privacy Policy',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: isuGreen,
+                            fontWeight: FontWeight.w600,
+                          ).copyWith(
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  GestureDetector(
+                    onTap: () => _openUrl(ApiConfig.termsUri),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.article_outlined, size: 18, color: isuGreen),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Terms & Conditions',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: isuGreen,
+                            fontWeight: FontWeight.w600,
+                          ).copyWith(
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Not Now', style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: isuGreen),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('I Agree', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+            actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          ),
+        ) ??
+        false;
+  }
+
+  /// Stamps acceptance on the server using the same proof pattern as the other
+  /// self-serve endpoints (user_id + current password, no token). Returns the
+  /// updated user (with consent timestamps) or null when it failed.
+  Future<UserModel?> _submitConsent(UserModel user, String password) async {
+    if (!mounted) return null;
+    try {
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.consentUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true',
+            },
+            body: json.encode({
+              'user_id': user.id,
+              'current_password': password,
+            }),
+          )
+          .timeout(const Duration(seconds: 7));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = json.decode(response.body);
+        final userData = data['user'];
+        final updated = UserModel.fromJson(
+          userData is Map<String, dynamic> ? userData : null,
+        );
+        if (updated.id == user.id) return updated;
+        // Fallback: server accepted but returned an unrecognizable user - keep
+        // the local copy but assume consent went through.
+        return user.copyWith(
+          acceptedTermsAt: user.acceptedTermsAt ??
+              DateTime.now().toUtc().toIso8601String(),
+          acceptedPrivacyAt: user.acceptedPrivacyAt ??
+              DateTime.now().toUtc().toIso8601String(),
+        );
+      }
+
+      if (!mounted) return null;
+      _showSnackBar('Could not save your acceptance. Please try again.', Colors.red);
+      return null;
+    } on TimeoutException catch (_) {
+      if (!mounted) return null;
+      _showSnackBar('Connection timed out. Please try again.', Colors.red);
+      return null;
+    } catch (e) {
+      if (!mounted) return null;
+      _showSnackBar('Failed to reach server: $e', Colors.red);
+      return null;
+    }
+  }
+
+  Future<void> _openUrl(Uri uri) async {
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      _showSnackBar('Could not open the link.', Colors.red);
+    }
+  }
+
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -658,6 +839,51 @@ class _LoginScreenState extends State<LoginScreen> {
                         fontSize: 15,
                         fontWeight: FontWeight.bold,
                         color: Color.fromARGB(255, 253, 255, 254),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              // Legal footer - always visible so users can reach the docs.
+              const SizedBox(height: 8),
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  TextButton(
+                    onPressed: () => _openUrl(ApiConfig.privacyPolicyUri),
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      'Privacy Policy',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color.fromARGB(255, 220, 255, 235),
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                  const Text(
+                    '·',
+                    style: TextStyle(fontSize: 13, color: Colors.white70),
+                  ),
+                  TextButton(
+                    onPressed: () => _openUrl(ApiConfig.termsUri),
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      'Terms & Conditions',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color.fromARGB(255, 220, 255, 235),
+                        decoration: TextDecoration.underline,
                       ),
                     ),
                   ),
