@@ -1,7 +1,10 @@
 import csv
+import logging
 import random
 import re
 import threading
+
+logger = logging.getLogger(__name__)
 from django.http import HttpResponse
 from django.shortcuts import render
 from rest_framework.views import APIView
@@ -82,7 +85,9 @@ def generate_otp():
 
 def send_registration_email(email, otp_code):
     """Deliver the registration OTP by email (runs on a background thread so
-    the /api/register/ response is not held up by the SMTP round-trip)."""
+    the /api/register/ response is not held up by the SMTP round-trip).
+
+    Returns True if the email was accepted by the SMTP server, False otherwise."""
     subject = f"{otp_code} is your ISU verification code"
     text_content = f"Your ISU verification code is: {otp_code}. It will expire in 10 minutes."
     try:
@@ -94,18 +99,27 @@ def send_registration_email(email, otp_code):
         )
         msg.attach_alternative(f"<h2>Your verification code is: <b>{otp_code}</b></h2>", "text/html")
         msg.send()
+        return True
     except Exception as e:
-        # The student can hit "Resend code" - never block account creation on
-        # a slow/failing mail server.
-        print(f"\n❌ Registration email failed for {email}: {str(e)}\n")
+        logger.error("Registration email failed for %s: %s", email, e)
+        return False
 
 
-def _resend_registration_email(email, otp_code):
-    threading.Thread(
-        target=send_registration_email,
-        args=(email, otp_code),
-        daemon=True,
-    ).start()
+def _resend_registration_email(email, otp_code, result_container=None):
+    """Send the registration email on a background thread.
+
+    If *result_container* is provided (a mutable list), it will be set to
+    ``[True]`` on success or ``[False]`` on failure so the caller can check.
+
+    Returns the daemon Thread so callers that care about the outcome can
+    ``thread.join(timeout=...)`` before reading the container."""
+    def _target():
+        ok = send_registration_email(email, otp_code)
+        if result_container is not None:
+            result_container[:] = [ok]
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    return t
 
 
 def _notify_admins_of_pending(username, email):
@@ -115,7 +129,7 @@ def _notify_admins_of_pending(username, email):
     try:
         send_new_registration_pending(username, email)
     except Exception as push_err:
-        print(f"❌ Pending-registration admin push failed: {push_err}")
+        logger.error("Pending-registration admin push failed: %s", push_err)
 
 
 def _send_approval_email(email, username, approved):
@@ -146,7 +160,7 @@ def _send_approval_email(email, username, approved):
         )
         msg.send()
     except Exception as e:
-        print(f"\n❌ Notification email failed for {email}: {str(e)}\n")
+        logger.error("Notification email failed for %s: %s", email, e)
 
 
 def _dispatch_approval_notifications(fcm_token, username, email, approved):
@@ -155,7 +169,7 @@ def _dispatch_approval_notifications(fcm_token, username, email, approved):
         try:
             send_approval_notification(fcm_token, is_approved=approved, username=username)
         except Exception as fcm_err:
-            print(f"⚠️ FCM failed for {username}: {fcm_err}")
+            logger.error("FCM failed for %s: %s", username, fcm_err)
     if email:
         threading.Thread(
             target=_send_approval_email,
@@ -273,15 +287,27 @@ class RegisterView(APIView):
                     defaults={'code': str(otp_code)}
                 )
         except Exception as e:
-            print(f"\n❌ DATABASE CRASH: {str(e)}\n")
+            logger.exception("DATABASE CRASH while creating account for %s", email)
             return Response({'detail': f'Failed to save account: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # 4. SEND VERIFICATION EMAIL - on a background thread so the app gets
         #    its 201 response immediately and the student lands on the OTP
         #    screen without waiting for the mail server.
-        _resend_registration_email(email, otp_code)
+        email_result = []
+        email_thread = _resend_registration_email(email, otp_code, email_result)
+        # Give the mail server a few seconds to accept/reject. If it answers
+        # in time we can warn the student that the mail silently bounced.
+        email_thread.join(timeout=8)
+        email_sent = email_result[0] if email_result else None
 
-        return Response({'message': 'Registration request submitted!'}, status=status.HTTP_201_CREATED)
+        response_data = {'message': 'Registration request submitted!'}
+        if email_sent is False:
+            response_data['email_sent'] = False
+            response_data['warning'] = (
+                'Account created, but the verification email could not be '
+                'delivered. Tap "Resend code" to receive your code.'
+            )
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 class ResendVerificationCodeAPIView(APIView):
     """Resends the registration OTP for an existing but unverified account.
@@ -305,9 +331,21 @@ class ResendVerificationCodeAPIView(APIView):
             email=email,
             defaults={'code': str(otp_code)}
         )
-        _resend_registration_email(email, otp_code)
 
-        return Response({'message': 'A new verification code was sent to your email.'}, status=status.HTTP_200_OK)
+        email_result = []
+        email_thread = _resend_registration_email(email, otp_code, email_result)
+        email_thread.join(timeout=8)
+        email_sent = email_result[0] if email_result else None
+
+        response_data = {'message': 'A new verification code was sent to your email.'}
+        if email_sent is False:
+            response_data['email_sent'] = False
+            response_data['warning'] = (
+                'The verification email could not be delivered. '
+                'Check your internet connection and try again.'
+            )
+            return Response(response_data, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(response_data, status=status.HTTP_200_OK)
 
 class SendVerificationCodeAPIView(APIView):
     permission_classes = [AllowAny]
@@ -326,7 +364,7 @@ class SendVerificationCodeAPIView(APIView):
             defaults={'code': str(otp_code)}
         )
 
-        print(f"\n[SAVED TO DATABASE] Email: '{email}' | Code: '{otp_code}'\n")
+        logger.info("[SAVED TO DATABASE] Email: '%s' | Code: '%s'", email, otp_code)
 
         subject = f"{otp_code} is your ISU verification code"
         text_content = f"Your ISU verification code is: {otp_code}. It will expire in 10 minutes."
@@ -443,7 +481,7 @@ class RequestPasswordResetCodeAPIView(APIView):
         user = User.objects.filter(email__iexact=email).first()
         if user is None:
             # Don't leak whether the address exists.
-            print(f"⚠️ Password reset requested for unknown email: {email}")
+            logger.info("Password reset requested for unknown email: %s", email)
             return Response({'message': self._SENT_MESSAGE, 'push_sent': False},
                             status=status.HTTP_200_OK)
 
@@ -461,9 +499,9 @@ class RequestPasswordResetCodeAPIView(APIView):
             try:
                 push_sent = send_password_reset_code(fcm_token, code, user.username)
             except Exception as fcm_err:
-                print(f"❌ Password-reset push failed: {fcm_err}")
+                logger.error("Password-reset push failed: %s", fcm_err)
         else:
-            print(f"⚠️ No FCM token for {user.username}; email only.")
+            logger.warning("No FCM token for %s; email only.", user.username)
 
         # B. Email it too, so a user without the app installed is not locked out.
         subject = f"{code} is your ISU password reset code"
@@ -502,7 +540,7 @@ class RequestPasswordResetCodeAPIView(APIView):
             msg.send()
             email_sent = True
         except Exception as mail_err:
-            print(f"❌ Password-reset email failed: {mail_err}")
+            logger.error("Password-reset email failed: %s", mail_err)
 
         # If neither channel worked the user can never continue - say so.
         if not push_sent and not email_sent:
@@ -511,8 +549,8 @@ class RequestPasswordResetCodeAPIView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        print(f"🔐 Password reset code for {user.username}: {code} "
-              f"(push={push_sent}, email={email_sent})")
+        logger.info("Password reset code for %s: %s (push=%s, email=%s)",
+                    user.username, code, push_sent, email_sent)
 
         return Response({
             'message': self._SENT_MESSAGE,
@@ -642,7 +680,7 @@ class RequestChangePasswordCodeAPIView(APIView):
         try:
             push_sent = send_change_password_code(user, code)
         except Exception as fcm_err:
-            print(f"❌ Change-password push failed: {fcm_err}")
+            logger.error("Change-password push failed: %s", fcm_err)
 
         # B. Email as the fallback channel.
         email_sent = False
@@ -671,7 +709,7 @@ class RequestChangePasswordCodeAPIView(APIView):
             msg.send()
             email_sent = True
         except Exception as mail_err:
-            print(f"❌ Change-password email failed: {mail_err}")
+            logger.error("Change-password email failed: %s", mail_err)
 
         if not push_sent and not email_sent:
             return Response(
@@ -679,8 +717,8 @@ class RequestChangePasswordCodeAPIView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        print(f"🔐 Change-password code for {user.username}: {code} "
-              f"(push={push_sent}, email={email_sent})")
+        logger.info("Change-password code for %s: %s (push=%s, email=%s)",
+                    user.username, code, push_sent, email_sent)
 
         return Response({
             'message': 'Confirmation code sent to your phone and email.',
@@ -704,9 +742,9 @@ class ConfirmChangePasswordAPIView(APIView):
         submitted = str(request.data.get('code') or '').strip()
         new_password = request.data.get('new_password') or ''
 
-        if not user_id or not submitted or not new_password:
+        if not user_id or not current_password or not submitted or not new_password:
             return Response(
-                {'detail': 'user_id, code, and new_password are required.'},
+                {'detail': 'user_id, current_password, code, and new_password are required.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -722,7 +760,7 @@ class ConfirmChangePasswordAPIView(APIView):
         except (User.DoesNotExist, ValueError):
             return Response({'detail': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        if current_password and not user.check_password(current_password):
+        if not user.check_password(current_password):
             return Response(
                 {'detail': 'Your current password is incorrect.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -865,10 +903,10 @@ class PasswordResetAPIView(APIView):
                 msg.attach_alternative(html_content, "text/html")
                 msg.send()
             except Exception as mail_err:
-                print(f"Email delivery failed: {mail_err}")
+                logger.error("Email delivery failed: %s", mail_err)
 
             # Print to terminal for debugging
-            print(f"PASSWORD RESET SUCCESS: User {username} temporary password is: {temp_password}")
+            logger.info("PASSWORD RESET SUCCESS: User %s temporary password is: %s", username, temp_password)
 
             return Response({'detail': 'Password reset successful. Check your email for your temporary password.'}, status=status.HTTP_200_OK)
             
@@ -881,14 +919,13 @@ class LoginAPIView(APIView):
         username = request.data.get('username') or request.POST.get('username')
         password = request.data.get('password') or request.POST.get('password')
 
-        print(f"--- Login Attempt Received ---")
-        print(f"Username typed: '{username}'")
-        print(f"Password typed: '{password}'")
+        logger.info("--- Login Attempt Received ---")
+        logger.info("Username typed: '%s'", username)
 
         try:
             # 1. Fetch the user directly from your custom database table
             user = User.objects.get(username=username)
-            print(f"User found in database! Hashed password: {user.password}")
+            logger.debug("User found in database: %s", username)
 
             # 2. Check the password manually using Django's internal hashing comparison
             if user.check_password(password):
@@ -3613,7 +3650,7 @@ class RequestAccountDeletionAPIView(APIView):
             )
             msg.send()
         except Exception as email_err:
-            print(f"❌ Failed to send deletion ack email to {user.email}: {email_err}")
+            logger.error("Failed to send deletion ack email to %s: %s", user.email, email_err)
 
         return Response(
             {
@@ -3795,7 +3832,7 @@ def account_deletion_page(request):
             )
             msg.send()
         except Exception as email_err:
-            print(f"❌ Failed to send deletion ack email to {user.email}: {email_err}")
+            logger.error("Failed to send deletion ack email to %s: %s", user.email, email_err)
 
         return render(request, 'attendance/account_deletion.html', {
             'success': (

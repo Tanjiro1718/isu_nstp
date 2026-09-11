@@ -340,7 +340,7 @@ class SystemSettings(models.Model):
 class OTPVerification(models.Model):
     email = models.EmailField(unique=True)
     code = models.CharField(max_length=6)
-    created_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def is_valid(self):
         # Code is valid for 10 minutes

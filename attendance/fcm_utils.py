@@ -1,24 +1,69 @@
 # fcm_utils.py
+import base64
+import json
+import logging
+import os
+
 import firebase_admin
 from firebase_admin import credentials, messaging
-import os
 from django.conf import settings
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 # Initialize Firebase Admin SDK once
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CRED_PATH = os.path.join(settings.BASE_DIR, 'serviceAccountKey.json')
 
 if not firebase_admin._apps:
-    if os.path.exists(CRED_PATH):
+    # Order of precedence, matching entrypoint.sh:
+    # 1. FIREBASE_SERVICE_ACCOUNT_B64 (base64-encoded service-account JSON)
+    # 2. FIREBASE_SERVICE_ACCOUNT      (raw service-account JSON)
+    # 3. serviceAccountKey.json         (committed-ignored local file)
+    _firebase_ok = False
+    _b64 = os.getenv('FIREBASE_SERVICE_ACCOUNT_B64', '')
+    _raw = os.getenv('FIREBASE_SERVICE_ACCOUNT', '')
+
+    if not _firebase_ok and _b64.strip():
         try:
-            cred = credentials.Certificate(CRED_PATH)
+            payload = base64.b64decode(_b64).decode('utf-8')
+            cred = credentials.Certificate(json.loads(payload))
             firebase_admin.initialize_app(cred)
-            print("✅ Firebase Admin SDK initialized successfully.")
-        except (ValueError, IOError, TypeError) as exc:
-            print(f"⚠️ WARNING: Could not load serviceAccountKey.json ({exc}). Push notifications will be disabled.")
-    else:
-        print("⚠️ WARNING: serviceAccountKey.json not found! Push notifications will be disabled.")
+            logger.info("Firebase Admin SDK initialized from FIREBASE_SERVICE_ACCOUNT_B64.")
+            _firebase_ok = True
+        except Exception as exc:
+            logger.warning(
+                "Could not load FIREBASE_SERVICE_ACCOUNT_B64 (%s). "
+                "Push notifications will be disabled.", exc
+            )
+
+    if not _firebase_ok and _raw.strip():
+        try:
+            cred = credentials.Certificate(json.loads(_raw))
+            firebase_admin.initialize_app(cred)
+            logger.info("Firebase Admin SDK initialized from FIREBASE_SERVICE_ACCOUNT.")
+            _firebase_ok = True
+        except Exception as exc:
+            logger.warning(
+                "Could not load FIREBASE_SERVICE_ACCOUNT (%s). "
+                "Push notifications will be disabled.", exc
+            )
+
+    if not _firebase_ok:
+        if os.path.exists(CRED_PATH):
+            try:
+                cred = credentials.Certificate(CRED_PATH)
+                firebase_admin.initialize_app(cred)
+                logger.info("Firebase Admin SDK initialized successfully.")
+            except (ValueError, IOError, TypeError) as exc:
+                logger.warning(
+                    "Could not load serviceAccountKey.json (%s). "
+                    "Push notifications will be disabled.", exc
+                )
+        else:
+            logger.warning(
+                "serviceAccountKey.json not found! Push notifications will be disabled."
+            )
 
 def send_approval_notification(fcm_token: str, is_approved: bool, username: str):
     """
