@@ -13,10 +13,11 @@ elif [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
     echo "Firebase service account key written from FIREBASE_SERVICE_ACCOUNT."
 fi
 
-# Run pending database migrations automatically on startup.
-if [ "$RUN_MIGRATIONS" = "true" ]; then
-    python manage.py migrate --noinput
-fi
+# Run pending database migrations automatically on startup. This is
+# unconditional so every deploy keeps the deployed schema in sync - the
+# previous RUN_MIGRATIONS gate was never set on Render, so tables silently
+# fell behind the migrations and login/serialization 500'd.
+python manage.py migrate --noinput
 
 # Collect static files (admin CSS etc.) into the staticfiles directory.
 python manage.py collectstatic --noinput
