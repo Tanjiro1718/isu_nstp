@@ -263,19 +263,13 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
             color: Colors.blue,
           ),
         ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.info_outline, size: 16, color: Colors.grey.shade600),
-            const SizedBox(width: 6),
-            const Expanded(
-              child: Text(
+        Align(
+          alignment: Alignment.centerLeft,
+          child: _InfoHint(
+            message:
                 "Students are notified when the activity opens, and again the "
                 "set minutes beforehand. Nobody can time in before the start.",
-                style: TextStyle(fontSize: 13, color: Colors.grey),
-              ),
-            ),
-          ],
+          ),
         ),
         const SizedBox(height: 12),
         InkWell(
@@ -338,21 +332,16 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
           ],
         ),
         if (_sessionType == _SessionType.lecturing)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.info_outline, size: 18, color: Colors.grey.shade600),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _InfoHint(
+                iconSize: 18,
+                message:
                     'No random presence checks for this session. Students just '
                     'check in and check out.',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
       ],
@@ -517,26 +506,12 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                         color: Colors.blue,
                       ),
                     ),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          size: 16,
-                          color: Colors.grey.shade600,
-                        ),
-                        const SizedBox(width: 6),
-                        const Expanded(
-                          child: Text(
-                            "Only students enrolled in the class you pick "
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: _InfoHint(
+                        message: "Only students enrolled in the class you pick "
                             "will see this session.",
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _buildClassPicker(),
@@ -553,24 +528,13 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                         color: Colors.blue,
                       ),
                     ),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          size: 16,
-                          color: Colors.grey.shade600,
-                        ),
-                        const SizedBox(width: 6),
-                        const Expanded(
-                          child: Text(
-                            "Tap the map to set where students should check "
-                            "in today. The map is limited to ISU Cauayan "
-                            "Campus.",
-                            style: TextStyle(fontSize: 13, color: Colors.grey),
-                          ),
-                        ),
-                      ],
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: _InfoHint(
+                        message: "Tap the map to set where students should "
+                            "check in today. The map is limited to ISU "
+                            "Cauayan Campus.",
+                      ),
                     ),
                     const SizedBox(height: 12),
 
@@ -761,4 +725,70 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
 enum _SessionType {
   cleaning,
   lecturing,
+}
+
+/// A tappable info icon that reveals an explanation in a dialog when tapped.
+///
+/// Keeps the form compact: the explanatory text lives behind the icon instead
+/// of taking up a paragraph on screen.
+class _InfoHint extends StatelessWidget {
+  final String message;
+  final double iconSize;
+
+  const _InfoHint({required this.message, this.iconSize = 16});
+
+  static const Color _isuGreen = Color(0xFF006837);
+
+  /// Shows the explanation for [message] in a rounded dialog.
+  static void showInfo(BuildContext context, String message) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline, color: _isuGreen),
+            SizedBox(width: 8),
+            Text('Good to know', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Colors.black87,
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              'Close',
+              style: TextStyle(
+                color: _isuGreen,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => showInfo(context, message),
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.all(2),
+        child: Icon(
+          Icons.info_outline,
+          size: iconSize,
+          color: Colors.grey.shade600,
+        ),
+      ),
+    );
+  }
 }
