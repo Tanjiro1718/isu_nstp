@@ -976,6 +976,24 @@ class LoginAPIView(APIView):
             return Response({'message': 'Username does not exist'}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class DiagnoseStudentSerializeAPIView(APIView):
+    """TEMP diagnostic: surface the exact exception the student
+    serialization path raises on Render. Returns only the exception
+    details, never the payload. Remove once the 500 is fixed."""
+
+    def get(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk)
+            data = UserSerializer(user, context={'request': request}).data
+            return Response({'ok': True, 'role': data.get('role')})
+        except Exception as exc:
+            return Response({
+                'ok': False,
+                'class': type(exc).__name__,
+                'error': str(exc),
+            }, status=500)
+
+
 class ProcessCheckInAPI(APIView):
     permission_classes = [AllowAny]
 

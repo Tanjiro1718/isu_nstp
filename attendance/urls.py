@@ -52,6 +52,7 @@ from .views import (
     RequestAccountDeletionAPIView,
     EditProfileAPIView,
     ConsentAPIView,
+    DiagnoseStudentSerializeAPIView,
 )
 
 
@@ -69,6 +70,8 @@ urlpatterns = [
     
     # 2. Login endpoint
     path('login/', LoginAPIView.as_view(), name='api-login'),
+    # TEMP diagnostic for the student-serialization 500 (remove after fix).
+    path('diagnose/student-serialize/<int:pk>/', DiagnoseStudentSerializeAPIView.as_view(), name='api-diagnose-student-serialize'),
     
     # 3. Attendance endpoints
     path('attendance/check-in/', ProcessCheckInAPI.as_view(), name='api-checkin'),
