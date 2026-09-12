@@ -48,7 +48,9 @@ class PendingApprovalAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        return qs.exclude(is_approved_by_admin=True) # Shows ONLY pending accounts
+        # Only email-verified students wait here: registration is not "pending"
+        # until the student proves the address with the OTP they received.
+        return qs.exclude(is_approved_by_admin=True).filter(is_email_verified=True)
 
     def save_model(self, request, obj, form, change):
         # Auto-activates the user so they can log in to Flutter!

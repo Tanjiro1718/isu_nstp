@@ -220,6 +220,95 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
     );
   }
 
+  void _showSettingsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Settings',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildSettingsCard(
+                  icon: Icons.account_circle,
+                  iconColor: Colors.grey.shade600,
+                  title: 'Profile Details',
+                  subtitle: 'View your name, email, and account details',
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showProfileView();
+                  },
+                ),
+                const SizedBox(height: 12),
+                _buildProfileLockCard(),
+                const SizedBox(height: 12),
+                _buildSettingsCard(
+                  icon: Icons.logout,
+                  iconColor: Colors.grey.shade600,
+                  title: 'Log Out',
+                  subtitle: 'Sign out of your account',
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    LogoutHelper.confirmAndLogout(context);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSettingsCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 3,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: iconColor.withValues(alpha: 0.15),
+            child: Icon(icon, color: iconColor),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          subtitle: Text(subtitle),
+          trailing: const Icon(
+            Icons.arrow_forward_ios,
+            size: 16,
+            color: Colors.grey,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildProfileDetails() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -380,14 +469,9 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
         iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
           IconButton(
-            icon: const Icon(Icons.account_circle_outlined),
-            tooltip: 'My Profile',
-            onPressed: _showProfileView,
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () => LogoutHelper.confirmAndLogout(context),
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: _showSettingsSheet,
           ),
         ],
       ),

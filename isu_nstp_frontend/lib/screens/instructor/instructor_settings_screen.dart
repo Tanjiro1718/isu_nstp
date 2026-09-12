@@ -263,10 +263,19 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
             color: Colors.blue,
           ),
         ),
-        const Text(
-          "Students are notified when the activity opens, and again the set "
-          "minutes beforehand. Nobody can time in before the start.",
-          style: TextStyle(fontSize: 13, color: Colors.grey),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline, size: 16, color: Colors.grey.shade600),
+            const SizedBox(width: 6),
+            const Expanded(
+              child: Text(
+                "Students are notified when the activity opens, and again the "
+                "set minutes beforehand. Nobody can time in before the start.",
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         InkWell(
@@ -276,7 +285,6 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
             decoration: InputDecoration(
               labelText: 'Start time',
               border: const OutlineInputBorder(),
-              prefixIcon: const Icon(Icons.schedule),
               // Only offer "clear" once a schedule is actually set.
               suffixIcon: _scheduledStart == null
                   ? null
@@ -295,7 +303,6 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
           decoration: const InputDecoration(
             labelText: 'Remind students before start',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.notifications_active_outlined),
           ),
           items: const [
             DropdownMenuItem(value: 0, child: Text('No advance reminder')),
@@ -313,7 +320,6 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
           decoration: const InputDecoration(
             labelText: 'Session type',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.category_outlined),
           ),
           items: const [
             DropdownMenuItem(
@@ -393,7 +399,6 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
       decoration: const InputDecoration(
         labelText: 'Assign this session to',
         border: OutlineInputBorder(),
-        prefixIcon: Icon(Icons.class_),
       ),
       hint: const Text('Select a class'),
       items: _classes.map((c) {
@@ -512,9 +517,26 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                         color: Colors.blue,
                       ),
                     ),
-                    const Text(
-                      "Only students enrolled in the class you pick will see this session.",
-                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 16,
+                          color: Colors.grey.shade600,
+                        ),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child: Text(
+                            "Only students enrolled in the class you pick "
+                            "will see this session.",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     _buildClassPicker(),
@@ -531,10 +553,24 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                         color: Colors.blue,
                       ),
                     ),
-                    const Text(
-                      "Tap the map to set where students should check in today. "
-                      "The map is limited to ISU Cauayan Campus.",
-                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 16,
+                          color: Colors.grey.shade600,
+                        ),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child: Text(
+                            "Tap the map to set where students should check "
+                            "in today. The map is limited to ISU Cauayan "
+                            "Campus.",
+                            style: TextStyle(fontSize: 13, color: Colors.grey),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
 

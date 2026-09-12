@@ -177,6 +177,74 @@ def _dispatch_approval_notifications(fcm_token, username, email, approved):
             daemon=True,
         ).start()
 
+
+def _deliver_password_reset_code(user, code, result_container=None):
+    """Deliver a password-reset code over push + email on a background thread.
+
+    Never blocks the request-code response on the FCM/SMTP round-trip. If a
+    *result_container* (a mutable list) is provided, its first element is set
+    to ``[push_sent, email_sent]`` once both channels have finished, so a
+    caller that does a short ``join(timeout=...)`` can still report delivery
+    failures without stalling the app.
+    """
+    push_sent = False
+    fcm_token = None
+    profile = getattr(user, 'student_profile', None)
+    if profile is None:
+        profile = getattr(user, 'studentprofile', None) or getattr(user, 'profile', None)
+    fcm_token = getattr(profile, 'fcm_token', None) if profile else None
+    if fcm_token:
+        try:
+            push_sent = send_password_reset_code(fcm_token, code, user.username)
+        except Exception as fcm_err:
+            logger.error("Password-reset push failed: %s", fcm_err)
+    else:
+        logger.warning("No FCM token for %s; email only.", user.username)
+
+    email_sent = False
+    subject = f"{code} is your ISU password reset code"
+    text_content = (
+        f"Hello {user.username},\n\n"
+        f"Your password reset code is: {code}\n\n"
+        f"It expires in 10 minutes. If you did not request this, ignore this email."
+    )
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <body style="font-family: Arial, sans-serif; padding: 20px;">
+      <h2>Password Reset Code</h2>
+      <p>Hello <strong>{user.username}</strong>,</p>
+      <p>Use this code to reset your ISU NSTP password:</p>
+      <div style="font-size: 30px; font-weight: bold; background-color: #eef2ff;
+                  color: #1e40af; padding: 14px 24px; display: inline-block;
+                  border-radius: 6px; letter-spacing: 4px;">{code}</div>
+      <p>This code expires in 10 minutes.</p>
+      <p style="color:#666; font-size:12px;">
+        If you did not request a password reset, you can safely ignore this email.
+      </p>
+    </body>
+    </html>
+    """
+    try:
+        msg = EmailMultiAlternatives(
+            subject,
+            text_content,
+            getattr(settings, 'DEFAULT_FROM_EMAIL', 'ISU Support <noreply@isu.edu.ph>'),
+            [user.email],
+        )
+        msg.attach_alternative(html_content, "text/html")
+        msg.send()
+        email_sent = True
+    except Exception as mail_err:
+        logger.error("Password-reset email failed: %s", mail_err)
+
+    logger.info("Password reset code for %s: %s (push=%s, email=%s)",
+                user.username, code, push_sent, email_sent)
+
+    if result_container is not None:
+        result_container[:] = [push_sent, email_sent]
+
+
 class HealthCheckAPIView(APIView):
     """Lightweight warm-up/uptime probe. Returning quickly from a single
     DB-less read pulls a sleeping Render instance out of cold start so the
@@ -491,72 +559,29 @@ class RequestPasswordResetCodeAPIView(APIView):
         PasswordResetCode.objects.filter(user=user).delete()
         PasswordResetCode.objects.create(user=user, code=code)
 
-        # A. Push the code to their phone (the channel the user asked for).
-        profile = getattr(user, 'student_profile', None)
-        fcm_token = getattr(profile, 'fcm_token', None) if profile else None
-        push_sent = False
-        if fcm_token:
-            try:
-                push_sent = send_password_reset_code(fcm_token, code, user.username)
-            except Exception as fcm_err:
-                logger.error("Password-reset push failed: %s", fcm_err)
-        else:
-            logger.warning("No FCM token for %s; email only.", user.username)
-
-        # B. Email it too, so a user without the app installed is not locked out.
-        subject = f"{code} is your ISU password reset code"
-        text_content = (
-            f"Hello {user.username},\n\n"
-            f"Your password reset code is: {code}\n\n"
-            f"It expires in 10 minutes. If you did not request this, ignore this email."
+        # Deliver the code (push + email) on a background thread so the app
+        # gets its 200 response immediately instead of waiting for the FCM
+        # and SMTP round-trips. The code is already persisted and valid for
+        # 10 minutes, so the entry screen can appear right away while the
+        # mail is still travelling.
+        delivery_result = []
+        delivery_thread = threading.Thread(
+            target=_deliver_password_reset_code,
+            args=(user, code, delivery_result),
+            daemon=True,
         )
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2>Password Reset Code</h2>
-          <p>Hello <strong>{user.username}</strong>,</p>
-          <p>Use this code to reset your ISU NSTP password:</p>
-          <div style="font-size: 30px; font-weight: bold; background-color: #eef2ff;
-                      color: #1e40af; padding: 14px 24px; display: inline-block;
-                      border-radius: 6px; letter-spacing: 4px;">{code}</div>
-          <p>This code expires in 10 minutes.</p>
-          <p style="color:#666; font-size:12px;">
-            If you did not request a password reset, you can safely ignore this email.
-          </p>
-        </body>
-        </html>
-        """
+        delivery_thread.start()
+        # Give delivery a few seconds to report a definitive push/email state,
+        # but never block the app's request past a couple of seconds.
+        delivery_thread.join(timeout=3)
 
-        email_sent = False
-        try:
-            msg = EmailMultiAlternatives(
-                subject,
-                text_content,
-                getattr(settings, 'DEFAULT_FROM_EMAIL', 'ISU Support <noreply@isu.edu.ph>'),
-                [user.email],
-            )
-            msg.attach_alternative(html_content, "text/html")
-            msg.send()
-            email_sent = True
-        except Exception as mail_err:
-            logger.error("Password-reset email failed: %s", mail_err)
+        response_data = {'message': self._SENT_MESSAGE}
+        if delivery_result:
+            push_sent, email_sent = delivery_result[0]
+            response_data['push_sent'] = push_sent
+            response_data['email_sent'] = email_sent
 
-        # If neither channel worked the user can never continue - say so.
-        if not push_sent and not email_sent:
-            return Response(
-                {'detail': 'Could not deliver your code right now. Please try again later.'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        logger.info("Password reset code for %s: %s (push=%s, email=%s)",
-                    user.username, code, push_sent, email_sent)
-
-        return Response({
-            'message': self._SENT_MESSAGE,
-            'push_sent': push_sent,
-            'email_sent': email_sent,
-        }, status=status.HTTP_200_OK)
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class ConfirmPasswordResetAPIView(APIView):
@@ -1602,7 +1627,13 @@ class UserViewSet(viewsets.ModelViewSet):
         if is_active == 'true':
             return queryset.filter(is_active=True)
         elif is_active == 'false':
-            return queryset.filter(is_active=False)
+            # Pending approvals: only accounts that verified their email first.
+            # An account that registered but never proved the address stays
+            # invisible until it verifies (or is replaced on a resubmit).
+            return queryset.filter(
+                is_active=False,
+                student_profile__is_email_verified=True,
+            )
 
         role = self.request.query_params.get('role')
         if role:

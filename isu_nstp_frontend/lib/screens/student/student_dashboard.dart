@@ -729,7 +729,6 @@ class _StudentDashboardState extends State<StudentDashboard> {
                   labelText: 'Class Code',
                   hintText: 'e.g. ABC123',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.vpn_key),
                 ),
                 enabled: !isJoining,
               ),
@@ -996,6 +995,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
                 : 'Use GPS to mark your attendance',
             icon: Icons.location_on,
             iconColor: Colors.grey.shade600,
+            showLeadingIcon: false,
             onTap: _isOpeningCheckIn ? null : _openCurrentSessionCheckIn,
           ),
           const SizedBox(height: 12),
@@ -1009,6 +1009,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
             subtitle: 'Can\'t attend an upcoming session? Submit an excuse letter',
             icon: Icons.drafts_outlined,
             iconColor: Colors.grey.shade600,
+            showLeadingIcon: false,
             onTap: () => _openFileExcuseScreen(),
           ),
         ],
@@ -1990,6 +1991,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
     required IconData icon,
     required Color iconColor,
     required VoidCallback? onTap,
+    bool showLeadingIcon = true,
   }) {
     return Card(
       elevation: 3,
@@ -2000,16 +2002,18 @@ class _StudentDashboardState extends State<StudentDashboard> {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 12.0),
           child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: iconColor.withValues(alpha: 0.15),
-              child: _isOpeningCheckIn && title == 'Check-In to Class'
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(icon, color: iconColor),
-            ),
+            leading: showLeadingIcon
+                ? CircleAvatar(
+                    backgroundColor: iconColor.withValues(alpha: 0.15),
+                    child: _isOpeningCheckIn && title == 'Check-In to Class'
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(icon, color: iconColor),
+                  )
+                : null,
             title: Text(
               title,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),

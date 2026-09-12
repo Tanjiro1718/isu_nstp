@@ -176,7 +176,7 @@ class _LoginScreenState extends State<LoginScreen> {
             },
             body: json.encode({'email': email}),
           )
-          .timeout(const Duration(seconds: 7));
+          .timeout(const Duration(seconds: 30));
 
       if (!mounted) return false;
 
@@ -220,7 +220,7 @@ class _LoginScreenState extends State<LoginScreen> {
               'new_password': newPassword,
             }),
           )
-          .timeout(const Duration(seconds: 7));
+          .timeout(const Duration(seconds: 30));
 
       if (!mounted) return false;
 

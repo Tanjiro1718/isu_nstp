@@ -15,12 +15,25 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from .models import OTPVerification
+
 PASSWORD = 'Str0ngPass123'
 
 
 class MediaServingTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+
+    def _verify(self, email):
+        """Prove the email with the stored OTP, like the app does, so the
+        account becomes a real pending registration."""
+        code = OTPVerification.objects.get(email=email).code
+        response = self.client.post(
+            '/api/verify-code/',
+            {'email': email, 'otp_code': code},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
 
     def _register_with_id(self):
         return self.client.post(
@@ -47,6 +60,7 @@ class MediaServingTests(TestCase):
         """The exact scenario that broke: a stored ID scan must be served by
         /media/<path> so the admin's 'View ID' dialog can load it."""
         self.assertEqual(self._register_with_id().status_code, 201)
+        self._verify('media_stu@isu.edu.ph')
 
         pending = self.client.get('/api/users/?is_active=false')
         self.assertEqual(pending.status_code, 200, pending.data)
@@ -67,6 +81,7 @@ class MediaServingTests(TestCase):
         """build_absolute_uri turns the relative storage path into a full URL,
         which is what Image.network on the phone needs."""
         self.assertEqual(self._register_with_id().status_code, 201)
+        self._verify('media_stu@isu.edu.ph')
         pending = self.client.get('/api/users/?is_active=false')
         record = next(u for u in pending.data if u['username'] == 'media_stu')
         self.assertTrue(
