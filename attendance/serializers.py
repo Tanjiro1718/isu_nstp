@@ -167,14 +167,19 @@ class UserSerializer(serializers.ModelSerializer):
             if pending:
                 image_field = getattr(pending, 'id_picture_front', None) or getattr(pending, 'id_picture', None)
 
-        if image_field and hasattr(image_field, 'url'):
+        if image_field:
             try:
-                request = self.context.get('request')
-                if request is not None:
-                    return request.build_absolute_uri(image_field.url)
-                return image_field.url
+                url = image_field.url
             except Exception:
                 return None
+            if url:
+                try:
+                    request = self.context.get('request')
+                    if request is not None:
+                        return request.build_absolute_uri(url)
+                    return url
+                except Exception:
+                    return None
         return None
 
     def create(self, validated_data):
@@ -325,11 +330,17 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
         if not obj.selfie_image:
             return None
 
-        request = self.context.get('request')
-        image_url = obj.selfie_image.url
-        if request is not None:
-            return request.build_absolute_uri(image_url)
-        return image_url
+        try:
+            image_url = obj.selfie_image.url
+        except Exception:
+            return None
+        try:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(image_url)
+            return image_url
+        except Exception:
+            return None
 
     def get_student_photo_url(self, obj):
         return self.get_selfie_image_url(obj)
@@ -508,10 +519,17 @@ class AttendanceExcuseSerializer(serializers.ModelSerializer):
     def get_attachment_url(self, obj):
         if not obj.attachment:
             return None
-        request = self.context.get('request')
-        if request is not None:
-            return request.build_absolute_uri(obj.attachment.url)
-        return obj.attachment.url
+        try:
+            url = obj.attachment.url
+        except Exception:
+            return None
+        try:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+        except Exception:
+            return None
 
 
 class GeofenceLeaveRequestSerializer(serializers.ModelSerializer):
