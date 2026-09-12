@@ -181,6 +181,21 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return false;
 
       if (response.statusCode == 200) {
+        bool? emailSent;
+        try {
+          final Map<String, dynamic> data = json.decode(response.body);
+          emailSent = data['email_sent'] as bool?;
+        } catch (_) {
+          // Non-JSON success body: treat as sent (older server builds).
+        }
+        if (emailSent == false) {
+          if (!mounted) return false;
+          _showSnackBar(
+            'The code could not be sent. Please try again or contact the NSTP office.',
+            Colors.red,
+          );
+          return false;
+        }
         return true;
       } else {
         final Map<String, dynamic> errorData = json.decode(response.body);

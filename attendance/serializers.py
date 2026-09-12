@@ -43,19 +43,24 @@ class RegisterSerializer(serializers.ModelSerializer):
         component_val = validated_data.pop('component', None) or validated_data.pop('course', None)
         section_code_val = validated_data.pop('section_code', None) or validated_data.pop('section', None)
 
-        user = User.objects.create_user(...)
+        user = User.objects.create_user(
+            username=validated_data.pop('username', ''),
+            email=validated_data.pop('email', ''),
+            password=validated_data.pop('password', None),
+            role='student',
+        )
 
         # Fetch the profile created by the signal and update its fields
         StudentProfile.objects.update_or_create(
             user=user,
             defaults={
-                'student_id': student_id,
-                'course_and_section': course_and_section,
-                'component': component,
-                'section_code': section_code,
-                'id_picture_front': id_picture_front,
+                'student_id': student_id_val or '',
+                'course_and_section': component_val or '',
+                'component': component_val or 'N/A',
+                'section_code': section_code_val or '',
             }
         )
+        return user
 
 class UserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(required=False, allow_blank=True)
@@ -100,6 +105,7 @@ class UserSerializer(serializers.ModelSerializer):
         rep['is_approved_by_admin'] = profile.is_approved_by_admin if profile else False
         rep['phone_number'] = getattr(instance, 'phone_number', None)
         rep['department'] = self._get_instructor_department(instance)
+        rep['position'] = self._get_instructor_position(instance)
         rep['first_name'] = instance.first_name
         rep['middle_name'] = getattr(instance, 'middle_name', None)
         rep['last_name'] = instance.last_name
@@ -125,6 +131,14 @@ class UserSerializer(serializers.ModelSerializer):
             return None
         department = getattr(profile, 'department', None)
         return str(department) if department else None
+
+    def _get_instructor_position(self, obj):
+        """Designation/rank (e.g. Instructor I) for instructor accounts, else None."""
+        profile = getattr(obj, 'instructor_profile', None) or getattr(obj, 'instructorprofile', None)
+        if profile is None:
+            return None
+        position = getattr(profile, 'position', None)
+        return str(position) if position else None
 
     def _display_role(self, obj):
         """
@@ -589,6 +603,9 @@ class EditProfileSerializer(serializers.ModelSerializer):
     department = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, max_length=50
     )
+    position = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=100
+    )
 
     class Meta:
         model = User
@@ -601,11 +618,17 @@ class EditProfileSerializer(serializers.ModelSerializer):
             'email',
             'phone_number',
             'department',
+            'position',
         ]
         read_only_fields = ['id', 'username']
 
     def update(self, instance, validated_data):
-        instance.email = (validated_data.get('email') or instance.email).strip()
+        # Instructors cannot change their registered email - it is the identity
+        # the account was created with, so a posted email is ignored for them.
+        if (instance.role or '').lower() == 'instructor':
+            instance.email = instance.email
+        else:
+            instance.email = (validated_data.get('email') or instance.email).strip()
         instance.first_name = (validated_data.get('first_name') or instance.first_name).strip()
         instance.last_name = (validated_data.get('last_name') or instance.last_name).strip()
 
@@ -618,12 +641,16 @@ class EditProfileSerializer(serializers.ModelSerializer):
 
         instance.save()
 
-        # Instructors carry a department (ROTC / CWTS / LTS). Deliberately
-        # skipped for other roles so a director never gets an InstructorProfile.
-        department = (validated_data.get('department') or '').strip()
-        if department and (instance.role or '').lower() == 'instructor':
+        # Instructors carry a department (ROTC / CWTS / LTS) and a position
+        # (e.g. Instructor I). Deliberately skipped for other roles so a
+        # director never gets an InstructorProfile.
+        if (instance.role or '').lower() == 'instructor':
             profile, _ = InstructorProfile.objects.get_or_create(user=instance)
-            profile.department = department
+            department = (validated_data.get('department') or '').strip()
+            if department:
+                profile.department = department
+            if 'position' in validated_data:
+                profile.position = (validated_data.get('position') or '').strip() or None
             profile.save()
 
         return instance

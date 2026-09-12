@@ -78,6 +78,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     String lastName,
     String phoneNumber,
     String department,
+    String position,
   ) async {
     try {
       final response = await http
@@ -96,6 +97,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               'last_name': lastName.trim(),
               'phone_number': phoneNumber.trim(),
               'department': department.trim(),
+              'position': position.trim(),
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -140,6 +142,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final emailController = TextEditingController(text: _user.email);
     final phoneController = TextEditingController(text: _user.phoneNumber);
     final departmentController = TextEditingController(text: _user.department);
+    final positionController = TextEditingController(text: _user.position);
     final passwordController = TextEditingController();
 
     final isInstructor = _user.role.toLowerCase() == 'instructor';
@@ -176,6 +179,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 lastNameController.text,
                 phoneController.text,
                 departmentController.text,
+                positionController.text,
               );
               setSheetState(() => busy = false);
 
@@ -279,11 +283,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       TextFormField(
                         controller: emailController,
                         keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
+                        enabled: !isInstructor,
+                        decoration: InputDecoration(
                           labelText: 'Email',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          // The registered email is the account's identity -
+                          // instructors keep it read-only.
+                          helperText: isInstructor
+                              ? 'Your registered email cannot be changed'
+                              : null,
                         ),
                         validator: (v) {
+                          if (isInstructor) return null;
                           final value = (v ?? '').trim();
                           if (value.isEmpty) return 'Email is required.';
                           if (!value.contains('@')) return 'Enter a valid email.';
@@ -301,6 +312,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                       if (isInstructor) ...[
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: positionController,
+                          decoration: const InputDecoration(
+                            labelText: 'Position',
+                            hintText: 'e.g. Instructor I',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
                         const SizedBox(height: 12),
                         TextFormField(
                           controller: departmentController,
@@ -729,6 +749,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _detailTile(Icons.person_outline, 'Full Name', user.displayName),
                   if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty)
                     _detailTile(Icons.phone_outlined, 'Phone', user.phoneNumber),
+                  if (user.position != null && user.position!.isNotEmpty)
+                    _detailTile(
+                        Icons.badge_outlined, 'Position', user.position),
                   if (user.department != null && user.department!.isNotEmpty)
                     _detailTile(Icons.apartment_outlined, 'Department',
                         user.department),
@@ -740,9 +763,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     leading: const Icon(Icons.edit_outlined, color: isuGreen),
                     title: const Text('Edit Profile',
                         style: TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: const Text(
-                      'Update your name, phone number, and email',
-                      style: TextStyle(fontSize: 12),
+                    subtitle: Text(
+                      user.role.toLowerCase() == 'instructor'
+                          ? 'Update your name, position, and department'
+                          : 'Update your name, phone number, and email',
+                      style: const TextStyle(fontSize: 12),
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _editProfile,

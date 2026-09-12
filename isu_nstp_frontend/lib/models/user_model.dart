@@ -15,6 +15,7 @@ class UserModel {
   final String? lastName;
   final String? phoneNumber;
   final String? department;
+  final String? position;
   final String? idPictureUrl;
   final String? dateJoined;
   final String? acceptedTermsAt;
@@ -37,6 +38,7 @@ class UserModel {
     this.lastName,
     this.phoneNumber,
     this.department,
+    this.position,
     this.idPictureUrl,
     this.dateJoined,
     this.acceptedTermsAt,
@@ -91,6 +93,7 @@ class UserModel {
       lastName: json['last_name']?.toString(),
       phoneNumber: json['phone_number']?.toString(),
       department: json['department']?.toString(),
+      position: json['position']?.toString(),
       idPictureUrl: json['id_picture_front']?.toString(),
       dateJoined: json['date_joined']?.toString(),
       acceptedTermsAt: json['accepted_terms_at']?.toString(),
@@ -117,6 +120,7 @@ class UserModel {
       'last_name': lastName,
       'phone_number': phoneNumber,
       'department': department,
+      'position': position,
       'id_picture_front': idPictureUrl,
       'date_joined': dateJoined,
       'accepted_terms_at': acceptedTermsAt,
@@ -142,6 +146,7 @@ class UserModel {
     String? lastName,
     String? phoneNumber,
     String? department,
+    String? position,
     String? idPictureUrl,
     String? dateJoined,
     String? acceptedTermsAt,
@@ -164,6 +169,7 @@ class UserModel {
       lastName: lastName ?? this.lastName,
       phoneNumber: phoneNumber ?? this.phoneNumber,
       department: department ?? this.department,
+      position: position ?? this.position,
       idPictureUrl: idPictureUrl ?? this.idPictureUrl,
       dateJoined: dateJoined ?? this.dateJoined,
       acceptedTermsAt: acceptedTermsAt ?? this.acceptedTermsAt,

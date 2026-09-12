@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../../services/notification_service.dart';
 import '../../services/profile_lock_service.dart';
-import '../../widgets/biometric_lock_widget.dart';
-import '../../widgets/change_password_flow.dart';
 import '../../widgets/lazy_tab_view.dart';
 import '../../widgets/logout_helper.dart';
+import '../profile_screen.dart';
 import 'instructor_settings_screen.dart';
 import 'instructor_monitor_screen.dart';
 import 'instructor_classes_screen.dart';
@@ -154,69 +153,25 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
     );
   }
 
-  void _showProfileView() {
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Row(
-            children: [
-              Icon(Icons.account_circle, color: Colors.grey.shade600, size: 28),
-              SizedBox(width: 8),
-              Text(
-                'Profile Details',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildProfileLockCard(),
-                const Divider(height: 24),
-                ListTile(
-                  leading: Icon(Icons.lock_reset, color: Colors.grey.shade600),
-                  title: const Text(
-                    'Change Password',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  subtitle: const Text(
-                    'Verify your identity, then set a new password',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.pop(dialogContext);
-                    ChangePasswordFlow.show(context, widget.user);
-                  },
-                ),
-                const Divider(height: 1),
-                if (_profileLockEnabled)
-                  BiometricLockWidget(child: _buildProfileDetails())
-                else
-                  _buildProfileDetails(),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text(
-                'Close',
-                style: TextStyle(
-                  color: isuGreen,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+  /// Opens the full-profile screen (shared with admin/director), which keeps
+  /// the profile-lock protection in force: when enabled, the device unlock is
+  /// requested before the screen is shown.
+  Future<void> _openProfileScreen() async {
+    if (_profileLockEnabled) {
+      final result = await ProfileLockService.authenticate(
+        reason: 'Verify your identity to view your profile details',
+      );
+      if (!mounted) return;
+      // Match BiometricLockWidget: a real failure keeps the details closed,
+      // while not-enrolled/error still let the instructor through.
+      if (result == LockResult.failed || result == LockResult.lockedOut) return;
+    }
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProfileScreen(user: widget.user),
+      ),
     );
   }
 
@@ -248,10 +203,10 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
                   icon: Icons.account_circle,
                   iconColor: Colors.grey.shade600,
                   title: 'Profile Details',
-                  subtitle: 'View your name, email, and account details',
+                  subtitle: 'View and edit your name, position, and contact details',
                   onTap: () {
                     Navigator.pop(sheetContext);
-                    _showProfileView();
+                    _openProfileScreen();
                   },
                 ),
                 const SizedBox(height: 12),
@@ -309,69 +264,6 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
     );
   }
 
-  Widget _buildProfileDetails() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildReadOnlyTile(
-          icon: Icons.person,
-          label: 'Full Name',
-          value: widget.user.displayName,
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: Icons.person_outline,
-          label: 'First Name',
-          value: widget.user.firstName ?? 'Not set',
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: Icons.person_outline,
-          label: 'Middle Name',
-          value: widget.user.middleName ?? 'Not set',
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: Icons.badge_outlined,
-          label: 'Last Name',
-          value: widget.user.lastName ?? 'Not set',
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: Icons.account_box,
-          label: 'Username',
-          value: widget.user.username,
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: Icons.email,
-          label: 'Email Address',
-          value: widget.user.email,
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: Icons.assignment_ind,
-          label: 'Role',
-          value: widget.user.role.toUpperCase(),
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: widget.user.isEmailVerified
-              ? Icons.verified
-              : Icons.mark_email_unread,
-          label: 'Email Verified',
-          value: widget.user.isEmailVerified ? 'Yes' : 'No',
-        ),
-        const Divider(height: 1),
-        _buildReadOnlyTile(
-          icon: Icons.calendar_today,
-          label: 'Registered On',
-          value: _formatJoinDate(widget.user.dateJoined),
-        ),
-      ],
-    );
-  }
-
   Widget _buildProfileLockCard() {
     return Card(
       elevation: 0,
@@ -405,50 +297,6 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
         ),
       ),
     );
-  }
-
-  Widget _buildReadOnlyTile({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        leading: Icon(icon, color: Colors.grey.shade600),
-        title: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            color: Colors.grey,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        subtitle: Text(
-          value.trim().isEmpty ? 'N/A' : value,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _formatJoinDate(String? iso) {
-    if (iso == null || iso.trim().isEmpty) return 'Unknown';
-    final parsed = DateTime.tryParse(iso);
-    if (parsed == null) return iso;
-
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    final local = parsed.toLocal();
-    return '${months[local.month - 1]} ${local.day}, ${local.year}';
   }
 
   @override

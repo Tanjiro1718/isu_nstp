@@ -38,6 +38,7 @@ class EditProfileAPITests(TestCase):
             'last_name': 'Cruz',
             'phone_number': '09171234567',
             'department': 'CWTS',
+            'position': 'Instructor I',
         }
         payload.update(overrides)
         return self.client.post('/api/edit-profile/', payload, format='json')
@@ -54,10 +55,36 @@ class EditProfileAPITests(TestCase):
         self.assertEqual(user.middle_name, 'Dela')
         self.assertEqual(user.last_name, 'Cruz')
         self.assertEqual(user.phone_number, '09171234567')
-        self.assertEqual(user.email, 'updated@isu.edu.ph')
 
-        department = InstructorProfile.objects.get(user=user).department
-        self.assertEqual(department, 'CWTS')
+        profile = InstructorProfile.objects.get(user=user)
+        self.assertEqual(profile.department, 'CWTS')
+        self.assertEqual(profile.position, 'Instructor I')
+
+    def test_instructor_email_is_immutable(self):
+        # The registered email is the account's identity - an instructor can
+        # change everything else but never their own email.
+        user = _make_user('instructor', 'frozen_email')
+        response = self._edit(user.id)
+        self.assertEqual(response.status_code, 200, response.data)
+        user.refresh_from_db()
+        self.assertEqual(user.email, 'frozen_email@isu.edu.ph')
+
+        # The serializer response must also keep reporting the original email.
+        self.assertEqual(response.data['user']['email'], 'frozen_email@isu.edu.ph')
+
+    def test_instructor_position_is_optional_and_clearable(self):
+        user = _make_user('instructor', 'pos_edit')
+        response = self._edit(user.id, position='')
+        self.assertEqual(response.status_code, 200, response.data)
+        position = InstructorProfile.objects.get(user=user).position
+        self.assertIsNone(position)
+
+        # Clearing an existing position is possible too.
+        user = _make_user('instructor', 'pos_clear')
+        InstructorProfile.objects.create(user=user, department='LTS', position='Professor')
+        response = self._edit(user.id, position='')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(InstructorProfile.objects.get(user=user).position)
 
     def test_director_updates_details_without_department(self):
         user = _make_user('director', 'dir_edit')
