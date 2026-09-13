@@ -10,6 +10,7 @@ import 'instructor_monitor_screen.dart';
 import 'instructor_classes_screen.dart';
 import 'class_attendance_records_screen.dart';
 import 'instructor_excuses_screen.dart';
+import 'instructor_sessions_screen.dart';
 
 class InstructorDashboard extends StatefulWidget {
   final UserModel user;
@@ -316,6 +317,22 @@ class _InstructorDashboardState extends State<InstructorDashboard> {
         elevation: 1,
         iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
+          // Only meaningful while creating a session, so it rides along on the
+          // Session tab rather than cluttering the other tabs' bars.
+          if (_currentIndex == 0)
+            IconButton(
+              icon: const Icon(Icons.event_note_outlined),
+              tooltip: 'My Sessions',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        InstructorSessionsScreen(user: widget.user),
+                  ),
+                );
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Settings',

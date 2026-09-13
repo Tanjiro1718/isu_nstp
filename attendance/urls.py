@@ -37,6 +37,7 @@ from .views import (
     DirectorOverviewAPIView,
     DirectorClassSessionsAPIView,
     StudentAttendanceHistoryAPIView,
+    InstructorSessionsAPIView,
     ClassAttendanceDatesAPIView,
     ClassAttendanceRecordsAPIView,
     StudentExcuseAPIView,
@@ -81,6 +82,8 @@ urlpatterns = [
     path('attendance/session/roster/', SessionPresenceRosterAPIView.as_view(), name='api-session-roster'),
     # Student-facing history: every session they were expected at.
     path('attendance/my-history/', StudentAttendanceHistoryAPIView.as_view(), name='api-my-attendance-history'),
+    # Instructor-facing list: every session they created, newest first.
+    path('instructor/sessions/', InstructorSessionsAPIView.as_view(), name='api-instructor-sessions'),
 
     # --- Director oversight ---
     path('director/overview/', DirectorOverviewAPIView.as_view(), name='api-director-overview'),

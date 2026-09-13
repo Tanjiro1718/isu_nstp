@@ -16,10 +16,17 @@ class ClassAttendanceRecordsScreen extends StatefulWidget {
   /// its own AppBar so the parent's bar is the only one on screen.
   final bool embedded;
 
+  /// Optional deep-link target: the class and day to open first, so tapping a
+  /// row in "My Sessions" lands straight on that activity's record.
+  final int? initialClassId;
+  final String? initialDate;
+
   const ClassAttendanceRecordsScreen({
     super.key,
     required this.user,
     this.embedded = false,
+    this.initialClassId,
+    this.initialDate,
   });
 
   @override
@@ -41,6 +48,7 @@ class _ClassAttendanceRecordsScreenState
   @override
   void initState() {
     super.initState();
+    _selectedDate = widget.initialDate;
     _loadClasses();
   }
 
@@ -57,7 +65,11 @@ class _ClassAttendanceRecordsScreenState
         _classes = classes;
         _loadingClasses = false;
         if (_classes.isNotEmpty) {
-          _selectedClass = _classes.first;
+          // Open the deep-linked class when there is one, else the first.
+          _selectedClass = _classes.firstWhere(
+            (c) => c.id == widget.initialClassId,
+            orElse: () => _classes.first,
+          );
           _loadRecords();
         }
       });

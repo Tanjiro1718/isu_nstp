@@ -151,6 +151,43 @@ class ClassAttendanceRecordsTests(TestCase):
         ids = {r['student_id'] for r in response.data['records']}
         self.assertNotIn('22-00003', ids)
 
+    def test_upcoming_session_is_not_reported_as_absent(self):
+        """A scheduled activity has no attendance yet, so it must not appear."""
+        AttendanceSession.objects.create(
+            instructor=self.instructor,
+            class_group=self.class_group,
+            title='Future Clean-up',
+            date_time=timezone.now() + timedelta(days=3),
+            target_latitude=17.0,
+            target_longitude=121.0,
+            radius_meters=100,
+        )
+
+        response = self.client.get(self._records_url())
+        activities = {r['activity'] for r in response.data['records']}
+        self.assertNotIn('Future Clean-up', activities)
+        # Only Ben's real no-show remains.
+        self.assertEqual(response.data['summary']['expected'], 2)
+        self.assertEqual(response.data['summary']['absent'], 1)
+
+    def test_upcoming_session_date_is_not_listed(self):
+        future = timezone.now() + timedelta(days=3)
+        AttendanceSession.objects.create(
+            instructor=self.instructor,
+            class_group=self.class_group,
+            title='Future Clean-up',
+            date_time=future,
+            target_latitude=17.0,
+            target_longitude=121.0,
+            radius_meters=100,
+        )
+
+        response = self.client.get(
+            f'/api/classes/{self.class_group.id}/attendance-dates/'
+        )
+        dates = {d['date'] for d in response.data['dates']}
+        self.assertNotIn(timezone.localtime(future).strftime('%Y-%m-%d'), dates)
+
     def test_unknown_class_is_a_404(self):
         response = self.client.get('/api/classes/999999/attendance-records/')
         self.assertEqual(response.status_code, 404)

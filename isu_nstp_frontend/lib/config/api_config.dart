@@ -95,6 +95,10 @@ class ApiConfig {
   static String myAttendanceHistoryUrl(int studentUserId) =>
       '$baseUrl/api/attendance/my-history/?student_id=$studentUserId';
 
+  /// Every session an instructor created, newest first.
+  static String instructorSessionsUrl(int instructorId) =>
+      '$baseUrl/api/instructor/sessions/?instructor_id=$instructorId';
+
   // ---------------------------------------------------------------
   // Director oversight
   // ---------------------------------------------------------------

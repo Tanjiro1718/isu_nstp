@@ -164,6 +164,25 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// Pulls the server's error message out of a response, tolerating a non-JSON
+  /// body. A 500/404 comes back as a Django HTML page, and blindly decoding it
+  /// used to surface a confusing `FormatException` instead of the real problem.
+  String _errorDetail(http.Response response, String fallback) {
+    try {
+      final data = json.decode(response.body);
+      if (data is Map) {
+        return (data['detail'] ??
+                data['error'] ??
+                data['message'] ??
+                fallback)
+            .toString();
+      }
+    } catch (_) {
+      // Body was not JSON (e.g. an HTML error page).
+    }
+    return '$fallback (server responded ${response.statusCode}).';
+  }
+
   // --- API 1: Request password reset code (push notification + email) ---
   Future<bool> _sendVerificationCode(String email) async {
     try {
@@ -198,9 +217,8 @@ class _LoginScreenState extends State<LoginScreen> {
         }
         return true;
       } else {
-        final Map<String, dynamic> errorData = json.decode(response.body);
         _showSnackBar(
-          errorData['detail'] ?? 'Could not send code at this time.',
+          _errorDetail(response, 'Could not send code at this time.'),
           Colors.red,
         );
         return false;
@@ -242,9 +260,8 @@ class _LoginScreenState extends State<LoginScreen> {
       if (response.statusCode == 200) {
         return true;
       } else {
-        final Map<String, dynamic> errorData = json.decode(response.body);
         _showSnackBar(
-          errorData['detail'] ?? 'Invalid code or reset failed.',
+          _errorDetail(response, 'Invalid code or reset failed.'),
           Colors.red,
         );
         return false;

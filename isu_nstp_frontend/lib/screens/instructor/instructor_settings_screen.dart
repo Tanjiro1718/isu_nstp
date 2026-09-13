@@ -9,6 +9,7 @@ import '../../models/class_model.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
 import '../../widgets/info_hint.dart';
+import 'instructor_sessions_screen.dart';
 
 class InstructorSettingsScreen extends StatefulWidget {
   final UserModel user;
@@ -695,6 +696,27 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                       child: const Text(
                         "Save Class Location & Start Session",
                         style: TextStyle(fontSize: 16),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                InstructorSessionsScreen(user: widget.user),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.event_note_outlined),
+                      label: const Text('View scheduled sessions'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue.shade800,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                     ),
                   ],

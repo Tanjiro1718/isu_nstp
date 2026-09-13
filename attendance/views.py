@@ -242,7 +242,12 @@ def _deliver_password_reset_code(user, code, result_container=None):
                 user.username, code, push_sent, email_sent)
 
     if result_container is not None:
-        result_container[:] = [push_sent, email_sent]
+        # The consumer unpacks ``result_container[0]`` into the pair, so the
+        # pair must be that single first element - not the whole container.
+        # Setting it flat made ``push_sent, email_sent = [True, False][0]``
+        # raise TypeError (unpacking a bool), which 500'd the request after
+        # the code had already been emailed.
+        result_container[:] = [(push_sent, email_sent)]
 
 
 class HealthCheckAPIView(APIView):
@@ -1903,7 +1908,12 @@ class JoinClassByCodeAPIView(APIView):
 
         if existing and existing.status == 'removed':
             existing.status = 'pending' if class_group.requires_approval else 'active'
-            existing.save()
+            existing.join_method = 'code'
+            # joined_at is auto_now_add, so it would keep the original
+            # (possibly months-old) timestamp on this update. Reset it so a
+            # rejoin is not billed for sessions held while they were gone.
+            existing.joined_at = timezone.now()
+            existing.save(update_fields=['status', 'join_method', 'joined_at'])
             return Response({'message': 'Re-enrolled in class', 'status': existing.status})
 
         # Create new enrollment
@@ -1968,7 +1978,11 @@ class JoinClassByLinkAPIView(APIView):
 
         if existing and existing.status == 'removed':
             existing.status = 'pending' if class_group.requires_approval else 'active'
-            existing.save()
+            existing.join_method = 'link'
+            # See the join-by-code path: refresh joined_at so a rejoin is not
+            # charged with absences from the period they had left.
+            existing.joined_at = timezone.now()
+            existing.save(update_fields=['status', 'join_method', 'joined_at'])
             return Response({'message': 'Re-enrolled in class', 'status': existing.status})
 
         enrollment_status = 'pending' if class_group.requires_approval else 'active'
@@ -2373,6 +2387,95 @@ class DirectorClassSessionsAPIView(APIView):
         })
 
 
+class InstructorSessionsAPIView(APIView):
+    """
+    Every session an instructor created, newest first.
+
+    "Was that activity actually created?" is otherwise only answerable from the
+    next-session pill on a class card, which shows one upcoming date per class.
+    This backs the instructor's "My Sessions" screen with the whole list plus
+    just enough attendance context to see how each one went.
+
+    GET ?instructor_id=<id>
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        instructor_id = request.query_params.get('instructor_id')
+        if not instructor_id:
+            return Response({'error': 'instructor_id is required'}, status=400)
+
+        class_ids = list(
+            ClassGroup.objects.filter(instructor_id=instructor_id)
+            .values_list('id', flat=True)
+        )
+
+        # No classes means no sessions - an empty list, not an error.
+        if not class_ids:
+            return Response({'sessions': []})
+
+        # Active roster size per class: the denominator for "X/Y timed in".
+        expected_by_class = {
+            row['class_group']: row['total']
+            for row in ClassEnrollment.objects.filter(
+                class_group_id__in=class_ids, status='active'
+            ).values('class_group').annotate(total=Count('id'))
+        }
+
+        # Attendance tallies for all of the instructor's sessions in one query.
+        stats = {
+            row['session_id']: row
+            for row in AttendanceRecord.objects
+            .filter(session__class_group_id__in=class_ids)
+            .values('session_id')
+            .annotate(
+                total=Count('id'),
+                checked_out=Count('id', filter=Q(check_out_at__isnull=False)),
+            )
+        }
+
+        now = timezone.now()
+        sessions = []
+        for session in (
+            AttendanceSession.objects
+            .filter(class_group_id__in=class_ids)
+            .select_related('class_group')
+            .order_by('-date_time', '-id')
+        ):
+            if session.date_time > now:
+                status_label = 'Upcoming'
+            elif now >= session.ends_at:
+                status_label = 'Completed'
+            else:
+                status_label = 'Ongoing'
+
+            row = stats.get(session.id, {})
+            present = row.get('total', 0) or 0
+            expected = expected_by_class.get(session.class_group_id, 0)
+            local_dt = timezone.localtime(session.date_time)
+
+            sessions.append({
+                'session_id': session.id,
+                'title': session.title,
+                'class_id': session.class_group_id,
+                'class_name': (
+                    session.class_group.name if session.class_group else 'Unassigned'
+                ),
+                'date_time': local_dt.strftime('%b %d, %Y %I:%M %p'),
+                'date_time_iso': session.date_time.isoformat(),
+                'ends_at_iso': session.ends_at.isoformat(),
+                'status': status_label,
+                'is_check_out_open': session.is_check_out_open,
+                'expected': expected,
+                'checked_in': present,
+                'checked_out': row.get('checked_out', 0) or 0,
+                'attendance_rate': round((present / expected) * 100, 1) if expected else 0.0,
+            })
+
+        return Response({'sessions': sessions})
+
+
 # ====================================================================================
 # STUDENT ATTENDANCE HISTORY
 # ====================================================================================
@@ -2386,7 +2489,9 @@ class StudentAttendanceHistoryAPIView(APIView):
     and left-join their records, synthesising an 'Absent' row where none exists.
 
     Sessions that opened before the student enrolled are skipped - they were
-    never expected at those, and counting them would invent absences.
+    never expected at those, and counting them would invent absences. Sessions
+    that have not started yet are skipped too: an upcoming activity is not an
+    absence, and it would otherwise make a new student look like a no-show.
     """
 
     permission_classes = [AllowAny]
@@ -2413,8 +2518,13 @@ class StudentAttendanceHistoryAPIView(APIView):
 
         joined_at_by_class = {e.class_group_id: e.joined_at for e in enrollments}
 
+        # Only sessions that have already started count. A scheduled activity
+        # is not an absence, and treating it as one made a freshly-enrolled
+        # student look like they had skipped classes that had not happened yet.
+        now = timezone.now()
         sessions = AttendanceSession.objects.filter(
-            class_group_id__in=joined_at_by_class.keys()
+            class_group_id__in=joined_at_by_class.keys(),
+            date_time__lte=now,
         ).select_related('class_group').order_by('-date_time')
 
         records_by_session = {
@@ -2565,7 +2675,9 @@ class ClassAttendanceDatesAPIView(APIView):
             return Response({'error': 'Class not found'}, status=404)
 
         sessions = AttendanceSession.objects.filter(
-            class_group=class_group
+            class_group=class_group,
+            # Scheduled-but-unheld activities have no attendance to report.
+            date_time__lte=timezone.now(),
         ).order_by('-date_time')
 
         # Group by local calendar date - a 10pm UTC session belongs to the day
@@ -2606,7 +2718,12 @@ class ClassAttendanceRecordsAPIView(APIView):
         except ClassGroup.DoesNotExist:
             return Response({'error': 'Class not found'}, status=404)
 
-        sessions = AttendanceSession.objects.filter(class_group=class_group)
+        sessions = AttendanceSession.objects.filter(
+            class_group=class_group,
+            # Only sessions that have already started can have absences. An
+            # upcoming activity must not read as a room full of no-shows.
+            date_time__lte=timezone.now(),
+        )
 
         date_param = request.query_params.get('date')
         if date_param:

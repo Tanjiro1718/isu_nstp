@@ -4,7 +4,10 @@ enrollment at a time, and can join a different class only after leaving their
 current one.
 """
 
+from datetime import timedelta
+
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .models import (
@@ -135,6 +138,23 @@ class LeaveAndRejoinTests(OneClassRuleTestBase):
             ).status,
             'active',
         )
+
+    def test_rejoin_refreshes_joined_at(self):
+        """Rejoining must not inherit the timestamp from before they left."""
+        self._enroll(self.class_a)
+        self._leave(self.class_a)
+
+        stale = timezone.now() - timedelta(days=30)
+        ClassEnrollment.objects.filter(
+            class_group=self.class_a, student=self.student_profile
+        ).update(joined_at=stale)
+
+        self.assertEqual(self._join_by_code(self.class_a).status_code, 200)
+
+        enrollment = ClassEnrollment.objects.get(
+            class_group=self.class_a, student=self.student_profile
+        )
+        self.assertGreater(enrollment.joined_at, stale + timedelta(days=1))
 
     def test_leave_unknown_class_returns_404(self):
         response = self.client.post(
