@@ -1097,11 +1097,6 @@ class _StudentDashboardState extends State<StudentDashboard> {
         _settingsSectionLabel('ACCOUNT'),
         const SizedBox(height: 8),
         _settingsGroup([
-          _settingsTile(
-            icon: Icons.account_circle_outlined,
-            title: 'Profile Details',
-            onTap: _showProfileView,
-          ),
           _buildProtectProfileTile(),
           _settingsTile(
             icon: Icons.key_outlined,
