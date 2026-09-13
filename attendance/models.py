@@ -303,6 +303,17 @@ class AttendanceRecord(models.Model):
     def __str__(self):
         return f"{self.student.student_id} - {self.session.title} [{self.status}]"
 
+    class Meta:
+        # One attendance row per student per activity. Without the constraint,
+        # two concurrent time-ins could both pass the "already timed in" check
+        # and insert duplicates.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['session', 'student'],
+                name='uniq_attendance_record_per_session',
+            )
+        ]
+
 
 # 5b. Random "are you still on site?" prompts tied to one attendance record
 class PresenceCheck(models.Model):

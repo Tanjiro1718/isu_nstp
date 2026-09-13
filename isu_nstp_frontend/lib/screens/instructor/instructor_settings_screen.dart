@@ -91,6 +91,7 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
   Future<void> _loadCurrentSettings() async {
     try {
       final response = await http.get(Uri.parse(apiUrl));
+      if (!mounted) return;
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
@@ -117,9 +118,13 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
           _isLoading = false;
         });
       } else {
+        // Stop the spinner even when the load fails, or the form never shows.
+        setState(() => _isLoading = false);
         _showSnackBar('Failed to load class parameters.', Colors.red);
       }
     } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
       _showSnackBar('Network connection error: $e', Colors.red);
     }
   }

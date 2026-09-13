@@ -146,7 +146,8 @@ class SubmitExcuseTests(ExcuseTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(AttendanceExcuse.objects.exists())
 
-    def test_an_activity_that_has_not_started_cannot_be_excused(self):
+    def test_a_future_activity_accepts_a_future_absence_excuse(self):
+        """A scheduled activity cannot be missed yet, so it records intent."""
         future = AttendanceSession.objects.create(
             instructor=self.instructor,
             class_group=self.class_group,
@@ -158,8 +159,11 @@ class SubmitExcuseTests(ExcuseTestBase):
         )
 
         response = self._submit(session=future)
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(AttendanceExcuse.objects.exists())
+        self.assertEqual(response.status_code, 201)
+
+        excuse = AttendanceExcuse.objects.get(session=future, student=self.student)
+        self.assertEqual(excuse.kind, 'future_absence')
+        self.assertIsNone(excuse.record)
 
     def test_a_non_member_cannot_file_against_someone_elses_class(self):
         outsider_user = User.objects.create_user(

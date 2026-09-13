@@ -1122,19 +1122,28 @@ class ProcessCheckInAPI(APIView):
                 except (TypeError, ValueError):
                     face_similarity = None
 
-                # Creates the record in your database
-                record = AttendanceRecord.objects.create(
+                # get_or_create rides the unique (session, student) constraint,
+                # so two concurrent time-ins cannot both insert a row.
+                record, created = AttendanceRecord.objects.get_or_create(
                     session=session,
                     student=student_profile,
-                    student_latitude=stud_lat,
-                    student_longitude=stud_lng,
-                    status='Present',
-                    mode=mode,
-                    student_address=request.data.get('address') or request.data.get('student_address'),
-                    selfie_verified=face_verified,
-                    selfie_image=selfie_file,
-                    face_similarity=face_similarity,
+                    defaults={
+                        'student_latitude': stud_lat,
+                        'student_longitude': stud_lng,
+                        'status': 'Present',
+                        'mode': mode,
+                        'student_address': request.data.get('address') or request.data.get('student_address'),
+                        'selfie_verified': face_verified,
+                        'selfie_image': selfie_file,
+                        'face_similarity': face_similarity,
+                    },
                 )
+
+                if not created:
+                    return Response({
+                        "status": "failed",
+                        "message": "You have already timed in for this activity.",
+                    }, status=400)
 
                 # Tell the instructor this student just checked in.
                 try:
@@ -4104,12 +4113,16 @@ class PendingLeavesAPIView(APIView):
                 {'error': 'instructor_id is required'}, status=400
             )
 
-        today = timezone.now().date()
+        # `__date` makes MySQL call CONVERT_TZ(), which returns NULL - and so
+        # matches nothing at all - unless the server's timezone tables have
+        # been loaded. Filter on an explicit local-midnight-to-midnight range.
+        start, end = _att_local_day_bounds(timezone.localdate())
         leaves = (
             GeofenceLeaveRequest.objects
             .filter(
                 session__instructor_id=instructor_id,
-                session__date_time__date=today,
+                session__date_time__gte=start,
+                session__date_time__lt=end,
             )
             .select_related('session__instructor', 'student__user')
             .order_by('-requested_at')
@@ -4125,7 +4138,8 @@ class PendingLeavesAPIView(APIView):
         return Response({
             'pending_count': GeofenceLeaveRequest.objects.filter(
                 session__instructor_id=instructor_id,
-                session__date_time__date=today,
+                session__date_time__gte=start,
+                session__date_time__lt=end,
                 status='pending',
             ).count(),
             'leaves': serializer.data,
