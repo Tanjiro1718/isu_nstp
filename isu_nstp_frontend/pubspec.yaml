@@ -56,6 +56,10 @@ dependencies:
   # On-device MediaPipe face detection + face embeddings (MobileFaceNet) for
   # verifying the student's selfie at time-in. Pure Dart, runs offline.
   face_detection_tflite: ^6.7.0
+  # Deep-link to the OS notification settings from the student Settings tab.
+  permission_handler: ^11.3.1
+  # Real app version/build shown on the About screen.
+  package_info_plus: ^8.1.0
 
 
 dev_dependencies:

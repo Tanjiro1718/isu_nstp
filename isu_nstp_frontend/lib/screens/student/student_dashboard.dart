@@ -4,6 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
@@ -1084,32 +1087,334 @@ class _StudentDashboardState extends State<StudentDashboard> {
     );
   }
 
-  /// Settings: profile details and the device-lock switch.
+  /// Settings: profile header, grouped account/app actions, and sign-out.
   Widget _buildSettingsTab() {
     return ListView(
       padding: const EdgeInsets.all(20.0),
       children: [
-        _buildDashboardCard(
-          context,
-          title: 'Profile Details',
-          subtitle: 'View your name, ID number, course, and component',
-          icon: Icons.account_circle,
-          iconColor: Colors.grey.shade600,
-          onTap: _showProfileView,
-        ),
-        const SizedBox(height: 16),
-        _buildProfileLockCard(),
-        const SizedBox(height: 16),
-        _buildDashboardCard(
-          context,
-          title: 'Log Out',
-          subtitle: 'Sign out of your account',
-          icon: Icons.logout,
-          iconColor: Colors.grey.shade600,
-          onTap: () => LogoutHelper.confirmAndLogout(context),
-        ),
+        _buildProfileHeaderCard(),
+        const SizedBox(height: 20),
+        _settingsSectionLabel('ACCOUNT'),
+        const SizedBox(height: 8),
+        _settingsGroup([
+          _settingsTile(
+            icon: Icons.account_circle_outlined,
+            title: 'Profile Details',
+            onTap: _showProfileView,
+          ),
+          _buildProtectProfileTile(),
+          _settingsTile(
+            icon: Icons.key_outlined,
+            title: 'Change Password',
+            onTap: () => ChangePasswordFlow.show(context, _currentUser),
+          ),
+        ]),
+        const SizedBox(height: 20),
+        _settingsSectionLabel('APP'),
+        const SizedBox(height: 8),
+        _settingsGroup([
+          _settingsTile(
+            icon: Icons.notifications_outlined,
+            title: 'Notifications',
+            subtitle: 'Open your device notification settings',
+            onTap: _openNotificationSettings,
+          ),
+          _settingsTile(
+            icon: Icons.info_outline,
+            title: 'About NSTP App',
+            onTap: _showAboutApp,
+          ),
+        ]),
+        const SizedBox(height: 20),
+        _settingsGroup([
+          _settingsTile(
+            icon: Icons.logout,
+            title: 'Log Out',
+            iconColor: Colors.red.shade700,
+            titleColor: Colors.red.shade700,
+            onTap: () => LogoutHelper.confirmAndLogout(context),
+          ),
+        ]),
       ],
     );
+  }
+
+  /// Identity at a glance: avatar, name, ID, and course/component.
+  Widget _buildProfileHeaderCard() {
+    final url = _currentUser.idPictureUrl;
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: _showProfileView,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: isuGreen.withValues(alpha: 0.15),
+                child: (url != null && url.isNotEmpty)
+                    ? ClipOval(
+                        child: Image.network(
+                          url,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          cacheWidth: 112,
+                          errorBuilder: (_, _, _) => _initialsAvatar(),
+                        ),
+                      )
+                    : _initialsAvatar(),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _currentUser.displayName,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _currentUser.studentId ?? _currentUser.username,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _profileSubtitle(),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.grey),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _initialsAvatar() {
+    final name = _currentUser.displayName.trim();
+    final parts =
+        name.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final initials = parts.isEmpty
+        ? '?'
+        : (parts.length == 1
+                ? parts.first.substring(0, 1)
+                : '${parts.first[0]}${parts.last[0]}')
+            .toUpperCase();
+    return Text(
+      initials,
+      style: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
+        color: isuGreen,
+      ),
+    );
+  }
+
+  String _profileSubtitle() {
+    final parts = [
+      if ((_currentUser.courseAndSection ?? '').isNotEmpty)
+        _currentUser.courseAndSection!,
+      if ((_currentUser.component ?? '').isNotEmpty) _currentUser.component!,
+    ];
+    return parts.isEmpty ? 'NSTP Student' : parts.join(' • ');
+  }
+
+  Widget _settingsSectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.8,
+          color: Colors.grey.shade600,
+        ),
+      ),
+    );
+  }
+
+  Widget _settingsGroup(List<Widget> children) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) const Divider(height: 1, indent: 56),
+            children[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _settingsTile({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    Color? iconColor,
+    Color? titleColor,
+    VoidCallback? onTap,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: iconColor ?? Colors.grey.shade700),
+      title: Text(
+        title,
+        style: TextStyle(fontWeight: FontWeight.w600, color: titleColor),
+      ),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle, style: const TextStyle(fontSize: 12)),
+      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+      onTap: onTap,
+    );
+  }
+
+  /// Lets the student put their personal details behind the device's own lock.
+  ///
+  /// Nothing biometric is uploaded or stored by the app - the match happens
+  /// inside the OS, and only this on/off flag is saved. Which methods the
+  /// prompt offers is entirely the OS's call.
+  Widget _buildProtectProfileTile() {
+    return SwitchListTile(
+      value: _profileLockEnabled,
+      onChanged: _biometricAvailable ? _toggleProfileLock : null,
+      activeThumbColor: isuGreen,
+      secondary: Icon(Icons.lock_outline, color: Colors.grey.shade700),
+      title: const Text(
+        'Protect My Profile',
+        style: TextStyle(fontWeight: FontWeight.w600),
+      ),
+      // Deliberately vague about the method: Android decides what the system
+      // prompt offers, so promising "Face Unlock" here would be a lie.
+      subtitle: Text(
+        !_biometricAvailable
+            ? 'Set up a screen lock on this device to use this'
+            : _profileLockEnabled
+                ? 'Your profile details are protected'
+                : 'Require your device unlock before showing profile details',
+        style: const TextStyle(fontSize: 12),
+      ),
+    );
+  }
+
+  Future<void> _openNotificationSettings() async {
+    try {
+      await openAppSettings();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open device settings.')),
+      );
+    }
+  }
+
+  Future<void> _showAboutApp() async {
+    String version = '—';
+    try {
+      final info = await PackageInfo.fromPlatform();
+      version = '${info.version} (${info.buildNumber})';
+    } catch (_) {
+      // Platform info can be unavailable in tests; keep the placeholder.
+    }
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.school, color: isuGreen),
+            SizedBox(width: 8),
+            Text('About NSTP App', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'ISU NSTP Attendance',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Version $version',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Attendance and presence verification for the Isabela State '
+              'University NSTP program.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.privacy_tip_outlined,
+                color: Colors.grey.shade700,
+              ),
+              title: const Text('Privacy Policy', style: TextStyle(fontSize: 14)),
+              trailing: const Icon(Icons.open_in_new, size: 16),
+              onTap: () => _openUrl(ApiConfig.privacyPolicyUri),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.description_outlined,
+                color: Colors.grey.shade700,
+              ),
+              title: const Text(
+                'Terms & Conditions',
+                style: TextStyle(fontSize: 14),
+              ),
+              trailing: const Icon(Icons.open_in_new, size: 16),
+              onTap: () => _openUrl(ApiConfig.termsUri),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text(
+              'Close',
+              style: TextStyle(color: isuGreen, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openUrl(Uri uri) async {
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the link.')),
+      );
+    }
   }
 
   /// The live presence panel: an urgent prompt when a random check is waiting,
@@ -1888,47 +2193,6 @@ class _StudentDashboardState extends State<StudentDashboard> {
                   value: _formatJoinDate(_currentUser.dateJoined),
                 ),
               ],
-    );
-  }
-
-  /// Lets the student put their personal details behind the device's own lock.
-  ///
-  /// Nothing biometric is uploaded or stored by the app - the match happens
-  /// inside the OS, and only this on/off flag is saved. Which methods the
-  /// prompt offers is entirely the OS's call.
-  Widget _buildProfileLockCard() {
-    return Card(
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4.0),
-        child: SwitchListTile(
-          value: _profileLockEnabled,
-          onChanged: _biometricAvailable ? _toggleProfileLock : null,
-          activeThumbColor: isuGreen,
-          secondary: CircleAvatar(
-            backgroundColor: isuGreen.withValues(alpha: 0.15),
-            child: Icon(Icons.face_retouching_natural, color: Colors.grey.shade600),
-          ),
-          title: const Text(
-            'Protect My Profile',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          // Deliberately vague about the method: Android decides what the
-          // system prompt offers, and most phones withhold face unlock from
-          // third-party apps, so promising "Face Unlock" here would be a lie.
-          subtitle: Text(
-            !_biometricAvailable
-                ? 'Set up a screen lock on this device to use this'
-                : _profileLockEnabled
-                    ? 'Your profile details are protected. Verification is '
-                          'required to turn this off.'
-                    : 'Require your device unlock (fingerprint, face, or PIN) '
-                          'before showing your profile details',
-            style: const TextStyle(fontSize: 13),
-          ),
-        ),
-      ),
     );
   }
 
