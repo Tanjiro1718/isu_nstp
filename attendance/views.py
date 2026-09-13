@@ -337,13 +337,14 @@ class RegisterView(APIView):
                 user.save()
 
                 # 2. SAVE THE STUDENT PROFILE (Now saving fcm_token!)
-                StudentProfile.objects.create(
+                # The ID photo is attached afterwards, outside this transaction,
+                # so a storage outage cannot roll back the whole account.
+                profile = StudentProfile.objects.create(
                     user=user,
                     student_id=student_id_val,
                     component=course,
                     section_code=section,
                     course_and_section=course_and_section or f"{course} {section}".strip(),
-                    id_picture_front=id_picture_front,
                     fcm_token=fcm_token  # 👈 SAVED HERE NOW
                 )
 
@@ -357,6 +358,27 @@ class RegisterView(APIView):
         except Exception as e:
             logger.exception("DATABASE CRASH while creating account for %s", email)
             return Response({'detail': f'Failed to save account: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 3b. STORE THE ID PHOTO - best effort. A misconfigured/unreachable
+        #     storage backend must not cost the student their account, so we
+        #     keep the registration and warn instead of returning a 500.
+        photo_stored = False
+        photo_warning = None
+        if id_picture_front is not None:
+            try:
+                profile.id_picture_front = id_picture_front
+                profile.save(update_fields=['id_picture_front'])
+                photo_stored = True
+            except Exception as storage_err:
+                logger.exception(
+                    "ID photo upload failed during registration for %s", email
+                )
+                profile.id_picture_front = None
+                photo_warning = (
+                    'Account created, but your ID picture could not be '
+                    'uploaded. Please contact the NSTP office so it can be '
+                    'attached to your record.'
+                )
 
         # 4. SEND VERIFICATION EMAIL - on a background thread so the app gets
         #    its 201 response immediately and the student lands on the OTP
@@ -375,6 +397,10 @@ class RegisterView(APIView):
                 'Account created, but the verification email could not be '
                 'delivered. Tap "Resend code" to receive your code.'
             )
+        if not photo_stored and photo_warning:
+            response_data['photo_upload_failed'] = True
+            response_data['photo_warning'] = photo_warning
+            response_data.setdefault('warning', photo_warning)
         return Response(response_data, status=status.HTTP_201_CREATED)
 
 class ResendVerificationCodeAPIView(APIView):

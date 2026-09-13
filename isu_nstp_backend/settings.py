@@ -8,6 +8,7 @@ from pathlib import Path
 import os
 import dj_database_url
 from dotenv import load_dotenv
+from .storage_config import S3_STORAGE, resolve_default_storage
 
 # Load environment variables from .env file
 load_dotenv()
@@ -181,22 +182,14 @@ STORAGES = {
 #   SUPABASE_S3_BUCKET       (e.g. "media", created as Public)
 #   SUPABASE_S3_ENDPOINT_URL (https://<project-ref>.supabase.co/storage/v1/s3)
 #   SUPABASE_S3_REGION       (e.g. ap-southeast-1)
-
-if os.getenv('USE_SUPABASE_STORAGE', 'false') == 'true':
+#
+# resolve_default_storage() only selects S3 when every required value is
+# present; a half-configured backend falls back to the filesystem so a missing
+# endpoint cannot turn every upload (registration, attendance, excuses) into a
+# 500.
+STORAGES['default'] = resolve_default_storage()
+if STORAGES['default'].get('BACKEND') == S3_STORAGE:
     INSTALLED_APPS += ['storages']
-    STORAGES['default'] = {
-        'BACKEND': 'storages.backends.s3.S3Storage',
-        'OPTIONS': {
-            'access_key': os.getenv('SUPABASE_S3_ACCESS_KEY', ''),
-            'secret_key': os.getenv('SUPABASE_S3_SECRET_KEY', ''),
-            'bucket_name': os.getenv('SUPABASE_S3_BUCKET', 'media'),
-            'endpoint_url': os.getenv('SUPABASE_S3_ENDPOINT_URL', ''),
-            'region_name': os.getenv('SUPABASE_S3_REGION', 'ap-southeast-1'),
-            'file_overwrite': False,
-            'querystring_auth': False,
-            'default_acl': 'public-read',
-        },
-    }
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
