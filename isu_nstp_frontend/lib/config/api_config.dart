@@ -99,6 +99,11 @@ class ApiConfig {
   static String instructorSessionsUrl(int instructorId) =>
       '$baseUrl/api/instructor/sessions/?instructor_id=$instructorId';
 
+  /// Soft-cancel an upcoming or running session. The row and any attendance
+  /// already recorded stay on file; students and reports just stop seeing it.
+  static String cancelInstructorSessionUrl(int sessionId) =>
+      '$baseUrl/api/instructor/sessions/$sessionId/cancel/';
+
   // ---------------------------------------------------------------
   // Director oversight
   // ---------------------------------------------------------------
@@ -116,6 +121,50 @@ class ApiConfig {
   /// Session-by-session breakdown for one class.
   static String directorClassSessionsUrl(int classId) =>
       '$baseUrl/api/director/classes/$classId/sessions/';
+
+  /// One day of campus attendance, rolled up to one row per student.
+  static String directorRecordsUrl({
+    String? component,
+    int? classId,
+    String? date,
+  }) {
+    final params = <String>[];
+    if (component != null && component.isNotEmpty) {
+      params.add('component=$component');
+    }
+    if (classId != null) params.add('class_id=$classId');
+    if (date != null && date.isNotEmpty) params.add('date=$date');
+    final query = params.isEmpty ? '' : '?${params.join('&')}';
+    return '$baseUrl/api/director/records/$query';
+  }
+
+  /// Campus-wide export. [mode] is class|program|instructor|day|custom; the
+  /// other arguments are the filters for that mode. Set [asCsv] to download
+  /// the rows as a spreadsheet instead of the JSON preview.
+  static String directorExportUrl({
+    required String mode,
+    String? component,
+    int? classId,
+    int? instructorId,
+    String? date,
+    String? dateFrom,
+    String? dateTo,
+    bool asCsv = false,
+  }) {
+    final params = <String>['mode=$mode'];
+    if (component != null && component.isNotEmpty) {
+      params.add('component=$component');
+    }
+    if (classId != null) params.add('class_id=$classId');
+    if (instructorId != null) params.add('instructor_id=$instructorId');
+    if (date != null && date.isNotEmpty) params.add('date=$date');
+    if (dateFrom != null && dateFrom.isNotEmpty) {
+      params.add('date_from=$dateFrom');
+    }
+    if (dateTo != null && dateTo.isNotEmpty) params.add('date_to=$dateTo');
+    if (asCsv) params.add('export=csv');
+    return '$baseUrl/api/director/export/?${params.join('&')}';
+  }
 
   // ---------------------------------------------------------------
   // Class attendance record (instructor: per class, per calendar date)

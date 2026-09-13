@@ -13,6 +13,8 @@ class InstructorSession {
   final DateTime dateTimeIso;
   final String status;
   final bool isCheckOutOpen;
+  final bool isCancelled;
+  final String? cancelledAt;
   final int expected;
   final int checkedIn;
   final int checkedOut;
@@ -27,6 +29,8 @@ class InstructorSession {
     required this.dateTimeIso,
     required this.status,
     required this.isCheckOutOpen,
+    required this.isCancelled,
+    required this.cancelledAt,
     required this.expected,
     required this.checkedIn,
     required this.checkedOut,
@@ -36,6 +40,9 @@ class InstructorSession {
   /// True for a session that has not finished yet (upcoming or running).
   bool get isUpcoming => status == 'Upcoming' || status == 'Ongoing';
   bool get isOngoing => status == 'Ongoing';
+
+  /// Cancellable while it has not finished and has not already been called off.
+  bool get canCancel => !isCancelled && status != 'Completed';
 
   /// Local calendar date (YYYY-MM-DD) so the attendance record can be opened
   /// on the day this session belongs to.
@@ -58,6 +65,8 @@ class InstructorSession {
               DateTime.now().toUtc(),
       status: json['status']?.toString() ?? 'Completed',
       isCheckOutOpen: json['is_check_out_open'] == true,
+      isCancelled: json['is_cancelled'] == true,
+      cancelledAt: json['cancelled_at']?.toString(),
       expected: _asInt(json['expected']),
       checkedIn: _asInt(json['checked_in']),
       checkedOut: _asInt(json['checked_out']),
@@ -100,5 +109,29 @@ class InstructorSessionsService {
     return sessions
         .map((e) => InstructorSession.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Calls off an upcoming or running session. Throws with the server's own
+  /// message when it refuses (not the owner, already finished, already
+  /// cancelled).
+  static Future<void> cancel(int sessionId, int instructorId) async {
+    final response = await http.post(
+      Uri.parse(ApiConfig.cancelInstructorSessionUrl(sessionId)),
+      headers: _headers,
+      body: jsonEncode({'instructor_id': instructorId}),
+    );
+
+    if (response.statusCode != 200) {
+      String message = 'Could not cancel the session (${response.statusCode}).';
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['error'] != null) {
+          message = decoded['error'].toString();
+        }
+      } catch (_) {
+        // Keep the status-code message.
+      }
+      throw Exception(message);
+    }
   }
 }

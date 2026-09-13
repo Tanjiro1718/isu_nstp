@@ -59,6 +59,7 @@ def _send_due_reminders(now):
 
     candidates = AttendanceSession.objects.filter(
         reminder_sent_at__isnull=True,
+        cancelled_at__isnull=True,
         class_group__isnull=False,
         # Not started yet: once it is open the reminder is pointless, the
         # 'now open' push below is the right message.
@@ -83,6 +84,7 @@ def _send_due_starts(now):
 
     candidates = AttendanceSession.objects.filter(
         start_notified_at__isnull=True,
+        cancelled_at__isnull=True,
         class_group__isnull=False,
         date_time__lte=now,
         date_time__gte=cutoff,

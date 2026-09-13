@@ -36,8 +36,11 @@ from .views import (
     SessionPresenceRosterAPIView,
     DirectorOverviewAPIView,
     DirectorClassSessionsAPIView,
+    DirectorExportAPIView,
+    DirectorRecordsAPIView,
     StudentAttendanceHistoryAPIView,
     InstructorSessionsAPIView,
+    CancelAttendanceSessionAPIView,
     ClassAttendanceDatesAPIView,
     ClassAttendanceRecordsAPIView,
     StudentExcuseAPIView,
@@ -84,10 +87,17 @@ urlpatterns = [
     path('attendance/my-history/', StudentAttendanceHistoryAPIView.as_view(), name='api-my-attendance-history'),
     # Instructor-facing list: every session they created, newest first.
     path('instructor/sessions/', InstructorSessionsAPIView.as_view(), name='api-instructor-sessions'),
+    # Soft-cancel an upcoming or running session (keeps the audit trail).
+    path('instructor/sessions/<int:pk>/cancel/', CancelAttendanceSessionAPIView.as_view(), name='api-instructor-session-cancel'),
 
     # --- Director oversight ---
     path('director/overview/', DirectorOverviewAPIView.as_view(), name='api-director-overview'),
     path('director/classes/<int:pk>/sessions/', DirectorClassSessionsAPIView.as_view(), name='api-director-class-sessions'),
+    # Campus-wide export; ?mode=class|program|instructor|day|custom, plus
+    # ?export=csv to download it as a spreadsheet.
+    path('director/export/', DirectorExportAPIView.as_view(), name='api-director-export'),
+    # One day of campus attendance, one row per student.
+    path('director/records/', DirectorRecordsAPIView.as_view(), name='api-director-records'),
     
     # 4. Settings & Security
     path('system-settings/', SystemSettingsAPIView.as_view(), name='system-settings'),

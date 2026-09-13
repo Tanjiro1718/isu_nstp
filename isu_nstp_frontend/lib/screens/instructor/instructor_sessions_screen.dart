@@ -115,6 +115,7 @@ class _InstructorSessionsScreenState extends State<InstructorSessionsScreen> {
                     (session) => _SessionCard(
                       session: session,
                       onTap: () => _openRecords(session),
+                      onCancel: () => _cancelSession(session),
                     ),
                   ),
               ],
@@ -162,13 +163,61 @@ class _InstructorSessionsScreenState extends State<InstructorSessionsScreen> {
       ),
     );
   }
+
+  Future<void> _cancelSession(InstructorSession session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Cancel this session?'),
+        content: Text(
+          '"${session.title}" will be called off. Any attendance already '
+          'recorded stays on file, but students will no longer see it and it '
+          'will not be counted in reports.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Cancel session'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await InstructorSessionsService.cancel(session.sessionId, widget.user.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session cancelled.')),
+      );
+      setState(_load);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 }
 
 class _SessionCard extends StatelessWidget {
   final InstructorSession session;
   final VoidCallback onTap;
+  final VoidCallback? onCancel;
 
-  const _SessionCard({required this.session, required this.onTap});
+  const _SessionCard({
+    required this.session,
+    required this.onTap,
+    this.onCancel,
+  });
 
   (Color, IconData) get _statusStyle {
     switch (session.status) {
@@ -176,6 +225,8 @@ class _SessionCard extends StatelessWidget {
         return (Colors.blue, Icons.schedule);
       case 'Ongoing':
         return (Colors.green, Icons.play_circle_outline);
+      case 'Cancelled':
+        return (Colors.grey, Icons.event_busy);
       default:
         return (Colors.grey, Icons.check_circle_outline);
     }
@@ -192,7 +243,7 @@ class _SessionCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: InkWell(
-        onTap: onTap,
+        onTap: session.isCancelled ? null : onTap,
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -217,9 +268,13 @@ class _SessionCard extends StatelessWidget {
                       children: [
                         Text(
                           session.title,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
+                            color: session.isCancelled ? Colors.grey : null,
+                            decoration: session.isCancelled
+                                ? TextDecoration.lineThrough
+                                : null,
                           ),
                         ),
                         const SizedBox(height: 2),
@@ -251,6 +306,28 @@ class _SessionCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (session.canCancel && onCancel != null)
+                    PopupMenuButton<String>(
+                      tooltip: 'Session actions',
+                      icon: Icon(
+                        Icons.more_vert,
+                        size: 20,
+                        color: Colors.grey.shade600,
+                      ),
+                      onSelected: (_) => onCancel!(),
+                      itemBuilder: (context) => const [
+                        PopupMenuItem<String>(
+                          value: 'cancel',
+                          child: Row(
+                            children: [
+                              Icon(Icons.event_busy, size: 18, color: Colors.red),
+                              SizedBox(width: 8),
+                              Text('Cancel session'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                 ],
               ),
               const SizedBox(height: 10),

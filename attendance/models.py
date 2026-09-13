@@ -114,6 +114,12 @@ class StudentProfile(models.Model):
 
 
 # 4. Attendance Session created by Instructors
+class AttendanceSessionQuerySet(models.QuerySet):
+    def active(self):
+        """Sessions that have not been called off."""
+        return self.filter(cancelled_at__isnull=True)
+
+
 class AttendanceSession(models.Model):
     instructor = models.ForeignKey(User, on_delete=models.CASCADE, limit_choices_to={'role': 'instructor'})
     class_group = models.ForeignKey('ClassGroup', on_delete=models.CASCADE, related_name='attendance_sessions', null=True, blank=True)
@@ -149,6 +155,26 @@ class AttendanceSession(models.Model):
     reminder_minutes = models.PositiveIntegerField(default=5)
     reminder_sent_at = models.DateTimeField(blank=True, null=True)
     start_notified_at = models.DateTimeField(blank=True, null=True)
+
+    # --- Cancellation (soft) ---
+    # An instructor can call off an upcoming or running activity. The row - and
+    # any attendance already recorded against it - stays for the audit trail;
+    # readers filter on cancelled_at__isnull=True so nothing cancelled is shown
+    # to students or counted in reports.
+    cancelled_at = models.DateTimeField(blank=True, null=True)
+    cancelled_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='cancelled_sessions',
+    )
+
+    objects = AttendanceSessionQuerySet.as_manager()
+
+    @property
+    def is_cancelled(self):
+        return self.cancelled_at is not None
 
     @property
     def photo_deadline(self):

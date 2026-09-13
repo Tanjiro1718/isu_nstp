@@ -47,6 +47,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.core.cache import cache
 from django.db.models import Count, Max, Q
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 import datetime
 from .models import OTPVerification
@@ -1035,7 +1036,13 @@ class ProcessCheckInAPI(APIView):
                     'section_code': 'CWTS-1A',
                 },
             )
-            
+
+            if session.cancelled_at is not None:
+                return Response({
+                    "status": "failed",
+                    "message": "This activity has been cancelled by your instructor.",
+                }, status=400)
+
             # A session tied to a class is only open to that class's active
             # members, otherwise anyone could post a session_id and check in.
             if session.class_group_id:
@@ -1194,6 +1201,10 @@ class PresenceStatusAPIView(APIView):
         if record is None:
             return Response({'has_record': False}, status=200)
 
+        # A cancelled activity has no live presence to report.
+        if record.session.cancelled_at is not None:
+            return Response({'has_record': False, 'cancelled': True}, status=200)
+
         pending = record.presence_checks.filter(status='sent').order_by('-sent_at').first()
         open_check = pending if (pending and pending.is_open) else None
 
@@ -1249,6 +1260,11 @@ class RespondPresenceCheckAPIView(APIView):
         # Only the owner of the record may answer it.
         if str(check.record.student.user_id) != str(student_id):
             return Response({'error': 'This presence check is not yours.'}, status=403)
+
+        if check.record.session.cancelled_at is not None:
+            return Response(
+                {'error': 'This activity has been cancelled.'}, status=400
+            )
 
         if check.status == 'responded':
             return Response({'message': 'Already confirmed.', 'status': 'responded'})
@@ -1325,6 +1341,11 @@ class CheckOutAPIView(APIView):
 
         if str(record.student.user_id) != str(student_id):
             return Response({'error': 'This attendance record is not yours.'}, status=403)
+
+        if record.session.cancelled_at is not None:
+            return Response(
+                {'error': 'This activity has been cancelled.'}, status=400
+            )
 
         # Settle any check that expired while they were walking over.
         dispatch_due_presence_checks(force=True)
@@ -1422,6 +1443,11 @@ class OpenCheckOutAPIView(APIView):
                 status=403,
             )
 
+        if session.cancelled_at is not None:
+            return Response(
+                {'error': 'This activity has been cancelled.'}, status=400
+            )
+
         if session.is_check_out_open:
             return Response({
                 'message': 'Time-out is already open.',
@@ -1470,6 +1496,11 @@ class SessionPresenceRosterAPIView(APIView):
             session = AttendanceSession.objects.get(id=session_id)
         except AttendanceSession.DoesNotExist:
             return Response({'error': 'Session not found'}, status=404)
+
+        if session.cancelled_at is not None:
+            return Response(
+                {'error': 'This activity has been cancelled.'}, status=400
+            )
 
         # Keep the tallies honest before reporting them.
         dispatch_due_presence_checks(force=True)
@@ -1550,7 +1581,7 @@ class AttendanceSessionAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        sessions = AttendanceSession.objects.order_by('-date_time', '-id')
+        sessions = AttendanceSession.objects.active().order_by('-date_time', '-id')
 
         # When a student asks, only surface sessions for classes they actually
         # joined. Without this every student sees every instructor's session.
@@ -2201,7 +2232,7 @@ class DirectorOverviewAPIView(APIView):
 
         sessions = {
             row['class_group_id']: row
-            for row in AttendanceSession.objects
+            for row in AttendanceSession.objects.active()
             .filter(class_group_id__in=class_ids)
             .values('class_group_id')
             .annotate(
@@ -2281,7 +2312,9 @@ class DirectorOverviewAPIView(APIView):
         )
 
         # Group the same rows by instructor so the director can see who is
-        # assigned to what, and who is falling behind.
+        # assigned to what, and who is falling behind. Attendance rate is
+        # recomputed from the pooled expected/present so it is a true weighted
+        # average, not an average of per-class rates.
         instructors = {}
         for row in rows:
             key = row['instructor_id']
@@ -2294,13 +2327,64 @@ class DirectorOverviewAPIView(APIView):
                 'session_count': 0,
                 'classes_needing_attention': 0,
                 'class_names': [],
+                '_expected': 0,
+                '_present': 0,
             })
             entry['class_count'] += 1
             entry['student_count'] += row['student_count']
             entry['session_count'] += row['session_count']
             entry['class_names'].append(row['class_name'])
+            entry['_expected'] += row['session_count'] * row['student_count']
+            entry['_present'] += row['check_in_count']
             if row['health'] == 'attention':
                 entry['classes_needing_attention'] += 1
+
+        instructor_rows = []
+        for entry in instructors.values():
+            expected = entry.pop('_expected')
+            present = entry.pop('_present')
+            entry['attendance_rate'] = (
+                round((present / expected) * 100, 1) if expected else 0.0
+            )
+            instructor_rows.append(entry)
+
+        # Campus attendance over time: rate per calendar day an activity ran,
+        # so the Overview tab can plot a trend instead of a single average.
+        students_by_class = {
+            c.id: enrolled.get(c.id, 0) for c in classes
+        }
+        expected_by_day = {}
+        for session in AttendanceSession.objects.filter(
+            class_group_id__in=class_ids
+        ).annotate(day=TruncDate('date_time')):
+            expected_by_day[session.day] = (
+                expected_by_day.get(session.day, 0)
+                + students_by_class.get(session.class_group_id, 0)
+            )
+
+        present_by_day = {
+            row['day']: row['present']
+            for row in AttendanceRecord.objects
+            .filter(session__class_group_id__in=class_ids)
+            .annotate(day=TruncDate('session__date_time'))
+            .values('day')
+            .annotate(present=Count('id'))
+        }
+
+        attendance_trend = []
+        for day in sorted(expected_by_day):
+            expected = expected_by_day[day]
+            present = present_by_day.get(day, 0)
+            attendance_trend.append({
+                'date': day.strftime('%m/%d'),
+                'attendance_rate': (
+                    round((present / expected) * 100, 1) if expected else 0.0
+                ),
+                'present': present,
+                'expected': expected,
+            })
+        # Keep the chart readable: only the most recent points.
+        attendance_trend = attendance_trend[-12:]
 
         return Response({
             'summary': {
@@ -2317,9 +2401,10 @@ class DirectorOverviewAPIView(APIView):
                 'health': _health_label(campus_rate, campus_expected > 0),
             },
             'instructors': sorted(
-                instructors.values(), key=lambda i: i['instructor_name'].lower()
+                instructor_rows, key=lambda i: i['instructor_name'].lower()
             ),
             'classes': rows,
+            'attendance_trend': attendance_trend,
         })
 
 
@@ -2353,7 +2438,7 @@ class DirectorClassSessionsAPIView(APIView):
         }
 
         sessions = []
-        for session in AttendanceSession.objects.filter(
+        for session in AttendanceSession.objects.active().filter(
             class_group=class_group
         ).order_by('-date_time'):
             row = stats.get(session.id, {})
@@ -2443,7 +2528,9 @@ class InstructorSessionsAPIView(APIView):
             .select_related('class_group')
             .order_by('-date_time', '-id')
         ):
-            if session.date_time > now:
+            if session.cancelled_at is not None:
+                status_label = 'Cancelled'
+            elif session.date_time > now:
                 status_label = 'Upcoming'
             elif now >= session.ends_at:
                 status_label = 'Completed'
@@ -2467,6 +2554,11 @@ class InstructorSessionsAPIView(APIView):
                 'ends_at_iso': session.ends_at.isoformat(),
                 'status': status_label,
                 'is_check_out_open': session.is_check_out_open,
+                'is_cancelled': session.cancelled_at is not None,
+                'cancelled_at': (
+                    session.cancelled_at.isoformat()
+                    if session.cancelled_at else None
+                ),
                 'expected': expected,
                 'checked_in': present,
                 'checked_out': row.get('checked_out', 0) or 0,
@@ -2474,6 +2566,58 @@ class InstructorSessionsAPIView(APIView):
             })
 
         return Response({'sessions': sessions})
+
+
+class CancelAttendanceSessionAPIView(APIView):
+    """
+    Call off an upcoming or running activity.
+
+    Soft cancel: the row and any attendance already recorded stay for the audit
+    trail, but cancelled sessions are filtered out of student views, reports,
+    and the alert sweep. Only the instructor who owns the session may cancel,
+    and only while it has not already finished.
+
+    POST session_id is in the URL; body carries `instructor_id`.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, pk):
+        instructor_id = request.data.get('instructor_id')
+        if not instructor_id:
+            return Response({'error': 'instructor_id is required'}, status=400)
+
+        try:
+            session = AttendanceSession.objects.get(pk=pk)
+        except AttendanceSession.DoesNotExist:
+            return Response({'error': 'Session not found'}, status=404)
+
+        if str(session.instructor_id) != str(instructor_id):
+            return Response(
+                {'error': 'Only the instructor who owns this session can cancel it.'},
+                status=403,
+            )
+
+        if session.cancelled_at is not None:
+            return Response({'error': 'This session is already cancelled.'}, status=400)
+
+        # A finished activity is history, not something to call off.
+        if timezone.now() >= session.ends_at:
+            return Response(
+                {'error': 'A completed session can no longer be cancelled.'},
+                status=400,
+            )
+
+        session.cancelled_at = timezone.now()
+        session.cancelled_by_id = instructor_id
+        session.save(update_fields=['cancelled_at', 'cancelled_by'])
+
+        return Response({
+            'message': 'Session cancelled.',
+            'session_id': session.id,
+            'cancelled_at': session.cancelled_at.isoformat(),
+            'is_cancelled': True,
+        })
 
 
 # ====================================================================================
@@ -2522,7 +2666,7 @@ class StudentAttendanceHistoryAPIView(APIView):
         # is not an absence, and treating it as one made a freshly-enrolled
         # student look like they had skipped classes that had not happened yet.
         now = timezone.now()
-        sessions = AttendanceSession.objects.filter(
+        sessions = AttendanceSession.objects.active().filter(
             class_group_id__in=joined_at_by_class.keys(),
             date_time__lte=now,
         ).select_related('class_group').order_by('-date_time')
@@ -2651,11 +2795,173 @@ CSV_COLUMNS = [
     ('remarks', 'Remarks'),
 ]
 
+# The director's campus-wide export spans classes, so each row also needs to
+# say which class/program/instructor it came from. The per-class CSV keeps the
+# original column set above.
+CAMPUS_CSV_COLUMNS = [
+    ('class_name', 'Class'),
+    ('component', 'Program'),
+    ('instructor_name', 'Instructor'),
+    ('student_id', 'Student ID'),
+    ('student_name', 'Student Name'),
+    ('course_and_section', 'Course & Section'),
+    ('activity', 'Activity'),
+    ('activity_date', 'Activity Date'),
+    ('activity_time', 'Activity Time'),
+    ('status', 'Status'),
+    ('excused', 'Excused'),
+    ('time_in', 'Time In'),
+    ('time_out', 'Time Out'),
+    ('presence_status', 'Presence Verification'),
+    ('responded_checks', 'Checks Answered'),
+    ('missed_checks', 'Checks Missed'),
+    ('selfie_verified', 'Selfie Verified'),
+    ('remarks', 'Remarks'),
+]
+
 PRESENCE_LABELS = {
     'ok': 'Verified',
     'warned': 'Warned',
     'failed': 'Failed',
 }
+
+
+def _att_local_day_bounds(target_date):
+    """The UTC instants that bracket [target_date] in the local timezone."""
+    tz = timezone.get_current_timezone()
+    start = timezone.make_aware(
+        datetime.datetime.combine(target_date, datetime.time.min), tz
+    )
+    return start, start + datetime.timedelta(days=1)
+
+
+def _att_row(session, student, record, is_excused=False):
+    """One student's attendance for one activity, as a plain dict.
+
+    Shared by the per-class record and the campus-wide director export so the
+    two can never disagree about what "present" or "excused" means.
+    """
+    user = student.user
+    local_session = timezone.localtime(session.date_time)
+
+    row = {
+        'session_id': session.id,
+        'student_id': student.student_id or user.username,
+        'student_name': user.get_full_name() or user.username,
+        'course_and_section': student.course_and_section or '',
+        'activity': session.title,
+        'activity_date': local_session.strftime('%Y-%m-%d'),
+        'activity_time': local_session.strftime('%I:%M %p'),
+        'excused': is_excused,
+        'session_latitude': str(session.target_latitude),
+        'session_longitude': str(session.target_longitude),
+    }
+
+    if record is None:
+        row.update({
+            # An approved excuse is the difference between a no-show and a
+            # sanctioned absence, so the two must not read the same.
+            'status': 'Excused' if is_excused else 'Absent',
+            'attended': False,
+            'time_in': '',
+            'time_out': '',
+            'presence_status': '',
+            'responded_checks': 0,
+            'missed_checks': 0,
+            'total_checks': 0,
+            'selfie_verified': False,
+            'face_similarity': None,
+            'remarks': (
+                'Absence excused by instructor.' if is_excused
+                else 'No time-in recorded.'
+            ),
+        })
+        return row
+
+    checks = list(record.presence_checks.all())
+    responded = sum(1 for c in checks if c.status == 'responded')
+
+    if record.presence_status == 'failed':
+        remarks = (
+            f'Timed in but missed {record.missed_checks} presence check(s); '
+            'attendance not verified.'
+        )
+    elif record.presence_status == 'warned':
+        remarks = 'Missed one presence check.'
+    elif record.check_out_at is None:
+        remarks = 'Timed in but never timed out.'
+    else:
+        remarks = ''
+
+    # They turned up but missed a ping, and the instructor accepted the
+    # explanation. Note it beside the failure rather than erasing it.
+    if is_excused and record.presence_status in ('warned', 'failed'):
+        remarks = f'{remarks} Missed check(s) excused by instructor.'.strip()
+
+    row.update({
+        'status': record.status,
+        'attended': True,
+        'time_in': timezone.localtime(record.timestamp).strftime('%I:%M %p'),
+        'time_out': (
+            timezone.localtime(record.check_out_at).strftime('%I:%M %p')
+            if record.check_out_at else ''
+        ),
+        'presence_status': PRESENCE_LABELS.get(
+            record.presence_status, record.presence_status or ''
+        ),
+        'responded_checks': responded,
+        'missed_checks': record.missed_checks,
+        'total_checks': len(checks),
+        'selfie_verified': record.selfie_verified,
+        'face_similarity': record.face_similarity,
+        'remarks': remarks,
+    })
+    return row
+
+
+def _att_summary(rows):
+    """Headline counts for a record/export, tolerant of any row set."""
+    total = len(rows)
+    present = sum(1 for r in rows if r['attended'])
+    verified = sum(
+        1 for r in rows if r['attended'] and r['presence_status'] != 'Failed'
+    )
+    # An excused absence is not an attendance, but it is not held against
+    # the student either - so it leaves the absent tally and the
+    # denominator behind the rate.
+    excused = sum(1 for r in rows if not r['attended'] and r.get('excused'))
+    counted = total - excused
+    return {
+        'expected': total,
+        'present': present,
+        'absent': total - present - excused,
+        'excused': excused,
+        'verified': verified,
+        'failed': sum(1 for r in rows if r['presence_status'] == 'Failed'),
+        'attendance_rate': round((present / counted) * 100, 1) if counted else 0.0,
+    }
+
+
+def _att_cell(row, key):
+    """One CSV cell. Booleans read better as Yes/No than True/False."""
+    value = row.get(key, '')
+    if isinstance(value, bool):
+        return 'Yes' if value else 'No'
+    return '' if value is None else value
+
+
+def _att_csv_response(filename, rows, columns):
+    """Streams the rows as a CSV attachment."""
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+    writer = csv.writer(response)
+    writer.writerow([label for _, label in columns])
+
+    for row in rows:
+        writer.writerow([_att_cell(row, key) for key, _ in columns])
+
+    return response
 
 
 class ClassAttendanceDatesAPIView(APIView):
@@ -2674,7 +2980,7 @@ class ClassAttendanceDatesAPIView(APIView):
         except ClassGroup.DoesNotExist:
             return Response({'error': 'Class not found'}, status=404)
 
-        sessions = AttendanceSession.objects.filter(
+        sessions = AttendanceSession.objects.active().filter(
             class_group=class_group,
             # Scheduled-but-unheld activities have no attendance to report.
             date_time__lte=timezone.now(),
@@ -2718,7 +3024,7 @@ class ClassAttendanceRecordsAPIView(APIView):
         except ClassGroup.DoesNotExist:
             return Response({'error': 'Class not found'}, status=404)
 
-        sessions = AttendanceSession.objects.filter(
+        sessions = AttendanceSession.objects.active().filter(
             class_group=class_group,
             # Only sessions that have already started can have absences. An
             # upcoming activity must not read as a room full of no-shows.
@@ -2737,7 +3043,7 @@ class ClassAttendanceRecordsAPIView(APIView):
             # __date. A __date lookup makes MySQL call CONVERT_TZ(), which
             # returns NULL - and therefore matches nothing at all - unless the
             # server's timezone tables have been loaded.
-            start, end = self._local_day_bounds(target)
+            start, end = _att_local_day_bounds(target)
             sessions = sessions.filter(date_time__gte=start, date_time__lt=end)
 
         session_param = request.query_params.get('session_id')
@@ -2778,7 +3084,7 @@ class ClassAttendanceRecordsAPIView(APIView):
                 record = by_session_student.get((session.id, enrollment.student_id))
                 is_excused = (session.id, enrollment.student_id) in excused
                 rows.append(
-                    self._row(session, enrollment.student, record, is_excused)
+                    _att_row(session, enrollment.student, record, is_excused)
                 )
 
         payload = {
@@ -2791,148 +3097,355 @@ class ClassAttendanceRecordsAPIView(APIView):
                 or class_group.instructor.username
             ),
             'date': date_param or '',
-            'summary': self._summary(rows),
+            'summary': _att_summary(rows),
             'records': rows,
         }
 
         if request.query_params.get('export') == 'csv':
-            return self._csv_response(class_group, date_param, rows)
+            # Spaces and slashes in a class name would make an awkward filename.
+            safe_name = re.sub(r'[^A-Za-z0-9]+', '_', class_group.name).strip('_')
+            suffix = date_param or 'all-dates'
+            return _att_csv_response(
+                f'attendance_{safe_name}_{suffix}.csv', rows, CSV_COLUMNS
+            )
 
         return Response(payload)
 
-    @staticmethod
-    def _local_day_bounds(target_date):
-        """The UTC instants that bracket [target_date] in the local timezone."""
-        tz = timezone.get_current_timezone()
-        start = timezone.make_aware(
-            datetime.datetime.combine(target_date, datetime.time.min), tz
+# ====================================================================================
+# DIRECTOR CAMPUS EXPORT (Per Class / Program / Instructor / Day / Custom)
+# ====================================================================================
+
+EXPORT_MODES = {'class', 'program', 'instructor', 'day', 'custom'}
+
+
+def _export_label(mode, component, class_id, instructor_id, date, date_from, date_to):
+    """A short, filename-safe slug describing what was exported."""
+    parts = [mode]
+    if component:
+        parts.append(str(component))
+    if class_id:
+        parts.append(f'class{class_id}')
+    if instructor_id:
+        parts.append(f'instructor{instructor_id}')
+    if date:
+        parts.append(str(date))
+    if date_from:
+        parts.append(f'from{date_from}')
+    if date_to:
+        parts.append(f'to{date_to}')
+    return re.sub(r'[^A-Za-z0-9]+', '_', '_'.join(parts)).strip('_').lower()
+
+
+def _campus_rows(classes, sessions):
+    """Session-student rows for a set of classes, shared by export and records.
+
+    One row per student per activity, with absences filled in from the roster,
+    approved excuses respected, and students who joined after an activity
+    excluded so they are never invented as no-shows.
+    """
+    class_ids = [c.id for c in classes]
+
+    enrollments = ClassEnrollment.objects.filter(
+        class_group_id__in=class_ids, status='active'
+    ).select_related('student__user')
+
+    records = AttendanceRecord.objects.filter(
+        session__in=sessions
+    ).select_related('student__user').prefetch_related('presence_checks')
+    by_session_student = {
+        (record.session_id, record.student_id): record for record in records
+    }
+
+    excused = set(
+        AttendanceExcuse.objects.filter(
+            session__in=sessions, status='approved'
+        ).values_list('session_id', 'student_id')
+    )
+
+    enrollments_by_class = {}
+    for enrollment in enrollments:
+        enrollments_by_class.setdefault(enrollment.class_group_id, []).append(
+            enrollment
         )
-        return start, start + datetime.timedelta(days=1)
 
-    def _row(self, session, student, record, is_excused=False):
-        user = student.user
-        local_session = timezone.localtime(session.date_time)
+    rows = []
+    for session in sessions:
+        class_group = session.class_group
+        instructor = class_group.instructor
+        instructor_name = instructor.get_full_name() or instructor.username
 
-        row = {
-            'session_id': session.id,
-            'student_id': student.student_id or user.username,
-            'student_name': user.get_full_name() or user.username,
-            'course_and_section': student.course_and_section or '',
-            'activity': session.title,
-            'activity_date': local_session.strftime('%Y-%m-%d'),
-            'activity_time': local_session.strftime('%I:%M %p'),
-            'excused': is_excused,
-            'session_latitude': str(session.target_latitude),
-            'session_longitude': str(session.target_longitude),
-        }
+        for enrollment in enrollments_by_class.get(session.class_group_id, []):
+            if enrollment.joined_at and session.date_time < enrollment.joined_at:
+                continue
 
-        if record is None:
-            row.update({
-                # An approved excuse is the difference between a no-show and a
-                # sanctioned absence, so the two must not read the same.
-                'status': 'Excused' if is_excused else 'Absent',
-                'attended': False,
-                'time_in': '',
-                'time_out': '',
-                'presence_status': '',
-                'responded_checks': 0,
-                'missed_checks': 0,
-                'total_checks': 0,
-                'selfie_verified': False,
-                'face_similarity': None,
-                'remarks': (
-                    'Absence excused by instructor.' if is_excused
-                    else 'No time-in recorded.'
-                ),
-            })
-            return row
+            record = by_session_student.get((session.id, enrollment.student_id))
+            is_excused = (session.id, enrollment.student_id) in excused
 
-        checks = list(record.presence_checks.all())
-        responded = sum(1 for c in checks if c.status == 'responded')
+            row = _att_row(session, enrollment.student, record, is_excused)
+            row['class_name'] = class_group.name
+            row['component'] = class_group.component or ''
+            row['instructor_name'] = instructor_name
+            rows.append(row)
 
-        if record.presence_status == 'failed':
-            remarks = (
-                f'Timed in but missed {record.missed_checks} presence check(s); '
-                'attendance not verified.'
-            )
-        elif record.presence_status == 'warned':
-            remarks = 'Missed one presence check.'
-        elif record.check_out_at is None:
-            remarks = 'Timed in but never timed out.'
-        else:
-            remarks = ''
+    return rows
 
-        # They turned up but missed a ping, and the instructor accepted the
-        # explanation. Note it beside the failure rather than erasing it.
-        if is_excused and record.presence_status in ('warned', 'failed'):
-            remarks = f'{remarks} Missed check(s) excused by instructor.'.strip()
 
-        row.update({
-            'status': record.status,
-            'attended': True,
-            'time_in': timezone.localtime(record.timestamp).strftime('%I:%M %p'),
-            'time_out': (
-                timezone.localtime(record.check_out_at).strftime('%I:%M %p')
-                if record.check_out_at else ''
-            ),
-            'presence_status': PRESENCE_LABELS.get(
-                record.presence_status, record.presence_status or ''
-            ),
-            'responded_checks': responded,
-            'missed_checks': record.missed_checks,
-            'total_checks': len(checks),
-            'selfie_verified': record.selfie_verified,
-            'face_similarity': record.face_similarity,
-            'remarks': remarks,
+def _group_daily_records(rows):
+    """Collapse session-student rows into one row per student for the day.
+
+    The director scans names, not activities, so a student who sat several
+    sessions shows up once. "Partial" means they turned up but something was
+    incomplete (missed presence check, never timed out) or they missed one of
+    the day's activities.
+    """
+    grouped = {}
+    for row in rows:
+        entry = grouped.setdefault(row['student_id'], {
+            'student_id': row['student_id'],
+            'student_name': row['student_name'],
+            'course_and_section': row['course_and_section'],
+            'class_name': row['class_name'],
+            'component': row['component'],
+            'instructor_name': row['instructor_name'],
+            'sessions': [],
+            '_attended': 0,
+            '_incomplete': 0,
+            '_absent': 0,
+            '_excused': 0,
         })
-        return row
 
-    def _summary(self, rows):
-        total = len(rows)
-        present = sum(1 for r in rows if r['attended'])
-        verified = sum(
-            1 for r in rows if r['attended'] and r['presence_status'] != 'Failed'
+        attended = row['attended']
+        incomplete = attended and (
+            row['presence_status'] != 'Verified' or not row['time_out']
         )
-        # An excused absence is not an attendance, but it is not held against
-        # the student either - so it leaves the absent tally and the
-        # denominator behind the rate.
-        excused = sum(1 for r in rows if not r['attended'] and r.get('excused'))
-        counted = total - excused
-        return {
-            'expected': total,
-            'present': present,
-            'absent': total - present - excused,
-            'excused': excused,
-            'verified': verified,
-            'failed': sum(1 for r in rows if r['presence_status'] == 'Failed'),
-            'attendance_rate': round((present / counted) * 100, 1) if counted else 0.0,
-        }
 
-    def _csv_response(self, class_group, date_param, rows):
-        """Streams the rows as a CSV attachment."""
-        response = HttpResponse(content_type='text/csv')
+        if attended:
+            entry['_attended'] += 1
+            if incomplete:
+                entry['_incomplete'] += 1
+        elif row['excused']:
+            entry['_excused'] += 1
+        else:
+            entry['_absent'] += 1
 
-        # Spaces and slashes in a class name would make an awkward filename.
-        safe_name = re.sub(r'[^A-Za-z0-9]+', '_', class_group.name).strip('_')
-        suffix = date_param or 'all-dates'
-        filename = f'attendance_{safe_name}_{suffix}.csv'
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        entry['sessions'].append({
+            'activity': row['activity'],
+            'activity_date': row['activity_date'],
+            'activity_time': row['activity_time'],
+            'status': row['status'],
+            'attended': attended,
+            'excused': row['excused'],
+            'time_in': row['time_in'],
+            'time_out': row['time_out'],
+            'presence_status': row['presence_status'],
+            'responded_checks': row['responded_checks'],
+            'missed_checks': row['missed_checks'],
+            'selfie_verified': row['selfie_verified'],
+            'remarks': row['remarks'],
+            'session_latitude': row['session_latitude'],
+            'session_longitude': row['session_longitude'],
+        })
 
-        writer = csv.writer(response)
-        writer.writerow([label for _, label in CSV_COLUMNS])
+    records = []
+    for entry in grouped.values():
+        attended = entry.pop('_attended')
+        incomplete = entry.pop('_incomplete')
+        absent = entry.pop('_absent')
+        excused = entry.pop('_excused')
 
-        for row in rows:
-            writer.writerow([self._cell(row, key) for key, _ in CSV_COLUMNS])
+        if attended == 0 and absent == 0 and excused > 0:
+            status = 'Excused'
+        elif attended == 0:
+            status = 'Absent'
+        elif incomplete > 0 or absent > 0:
+            status = 'Partial'
+        else:
+            status = 'Present'
 
-        return response
+        entry['status'] = status
+        entry['attended_count'] = attended
+        entry['missed_count'] = absent
+        records.append(entry)
 
-    @staticmethod
-    def _cell(row, key):
-        """One CSV cell. Booleans read better as Yes/No than True/False."""
-        value = row.get(key, '')
-        if isinstance(value, bool):
-            return 'Yes' if value else 'No'
-        return '' if value is None else value
+    return records
+
+
+class DirectorExportAPIView(APIView):
+    """
+    Campus-wide attendance export for the director.
+
+    A single endpoint serves every "Export By" choice through `mode`, so a
+    Custom export is just a combination of the same filters rather than its own
+    route. Appending `?export=csv` downloads the spreadsheet; without it the
+    identical rows come back as JSON so the app (and tests) can preview what
+    would be exported.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        mode = request.query_params.get('mode', 'custom')
+        if mode not in EXPORT_MODES:
+            return Response(
+                {'error': f'mode must be one of {sorted(EXPORT_MODES)}'},
+                status=400,
+            )
+
+        component = request.query_params.get('component')
+        class_id = request.query_params.get('class_id')
+        instructor_id = request.query_params.get('instructor_id')
+        date_param = request.query_params.get('date')
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+
+        # A Custom export with nothing chosen would dump the whole campus;
+        # require at least one filter so the director gets what they meant.
+        if mode == 'custom' and not any(
+            [component, class_id, instructor_id, date_param, date_from, date_to]
+        ):
+            return Response(
+                {'error': 'Choose at least one filter for a custom export.'},
+                status=400,
+            )
+
+        classes = ClassGroup.objects.select_related('instructor').order_by('name')
+        if component:
+            classes = classes.filter(component__iexact=component)
+        if class_id:
+            classes = classes.filter(id=class_id)
+        if instructor_id:
+            classes = classes.filter(instructor_id=instructor_id)
+
+        classes = list(classes)
+        class_ids = [c.id for c in classes]
+
+        sessions_qs = AttendanceSession.objects.active().filter(
+            class_group_id__in=class_ids,
+            # Only activities that already ran can have attendance to report.
+            date_time__lte=timezone.now(),
+        ).select_related('class_group__instructor').order_by('date_time')
+
+        if date_param:
+            try:
+                target = datetime.datetime.strptime(date_param, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'error': 'date must look like YYYY-MM-DD'}, status=400
+                )
+            start, end = _att_local_day_bounds(target)
+            sessions_qs = sessions_qs.filter(date_time__gte=start, date_time__lt=end)
+
+        if date_from:
+            try:
+                start = _att_local_day_bounds(
+                    datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+                )[0]
+            except ValueError:
+                return Response(
+                    {'error': 'date_from must look like YYYY-MM-DD'}, status=400
+                )
+            sessions_qs = sessions_qs.filter(date_time__gte=start)
+
+        if date_to:
+            try:
+                end = _att_local_day_bounds(
+                    datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+                )[1]
+            except ValueError:
+                return Response(
+                    {'error': 'date_to must look like YYYY-MM-DD'}, status=400
+                )
+            sessions_qs = sessions_qs.filter(date_time__lt=end)
+
+        sessions = list(sessions_qs)
+        rows = _campus_rows(classes, sessions)
+
+        if request.query_params.get('export') == 'csv':
+            label = _export_label(
+                mode, component, class_id, instructor_id,
+                date_param, date_from, date_to,
+            )
+            stamp = timezone.localdate().strftime('%Y%m%d')
+            return _att_csv_response(
+                f'attendance_{label}_{stamp}.csv', rows, CAMPUS_CSV_COLUMNS
+            )
+
+        return Response({
+            'mode': mode,
+            'filters': {
+                'component': component or '',
+                'class_id': class_id or '',
+                'instructor_id': instructor_id or '',
+                'date': date_param or '',
+                'date_from': date_from or '',
+                'date_to': date_to or '',
+            },
+            'summary': _att_summary(rows),
+            'records': rows,
+        })
+
+
+class DirectorRecordsAPIView(APIView):
+    """
+    One day of campus attendance, rolled up to one row per student.
+
+    The director is scanning people, not activities: a student who sat three
+    sessions shows up once, with their status for the day and the individual
+    sessions tucked into the row for the app to expand.
+
+    Filters: ?component=CWTS, ?class_id=<id>, ?date=YYYY-MM-DD (defaults today).
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        component = request.query_params.get('component')
+        class_id = request.query_params.get('class_id')
+        date_param = request.query_params.get('date')
+        if not date_param:
+            date_param = timezone.localdate().strftime('%Y-%m-%d')
+
+        try:
+            target = datetime.datetime.strptime(date_param, '%Y-%m-%d').date()
+        except ValueError:
+            return Response(
+                {'error': 'date must look like YYYY-MM-DD'}, status=400
+            )
+
+        classes = ClassGroup.objects.select_related('instructor')
+        if component:
+            classes = classes.filter(component__iexact=component)
+        if class_id:
+            classes = classes.filter(id=class_id)
+        classes = list(classes)
+
+        start, end = _att_local_day_bounds(target)
+        sessions = list(
+            AttendanceSession.objects.active().filter(
+                class_group_id__in=[c.id for c in classes],
+                date_time__gte=start,
+                date_time__lt=end,
+                # A scheduled activity later today has no attendance yet.
+                date_time__lte=timezone.now(),
+            ).select_related('class_group__instructor').order_by('date_time')
+        )
+
+        records = _group_daily_records(_campus_rows(classes, sessions))
+        records.sort(key=lambda r: r['student_name'].lower())
+
+        return Response({
+            'date': date_param,
+            'component': component or '',
+            'class_id': class_id or '',
+            'summary': {
+                'students': len(records),
+                'present': sum(1 for r in records if r['status'] == 'Present'),
+                'absent': sum(1 for r in records if r['status'] == 'Absent'),
+                'partial': sum(1 for r in records if r['status'] == 'Partial'),
+                'excused': sum(1 for r in records if r['status'] == 'Excused'),
+            },
+            'records': records,
+        })
 
 
 # ====================================================================================
@@ -3001,6 +3514,11 @@ class StudentExcuseAPIView(APIView):
             ).get(id=session_id)
         except AttendanceSession.DoesNotExist:
             return Response({'error': 'Activity not found'}, status=404)
+
+        if session.cancelled_at is not None:
+            return Response(
+                {'error': 'This activity has been cancelled.'}, status=400
+            )
 
         # Only an approved member of the class may file against its activities.
         if session.class_group_id:
@@ -3320,6 +3838,11 @@ class RequestLeaveAPIView(APIView):
             session = AttendanceSession.objects.get(id=session_id)
         except AttendanceSession.DoesNotExist:
             return Response({'error': 'Activity not found'}, status=404)
+
+        if session.cancelled_at is not None:
+            return Response(
+                {'error': 'This activity has been cancelled.'}, status=400
+            )
 
         # Must have an active attendance record for this session.
         record = AttendanceRecord.objects.filter(
@@ -3727,6 +4250,7 @@ class UpcomingSessionsForStudentAPIView(APIView):
 
         sessions = (
             AttendanceSession.objects
+            .active()
             .filter(class_group_id__in=class_ids, date_time__gt=now)
             .select_related('class_group')
             .order_by('date_time')

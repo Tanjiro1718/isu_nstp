@@ -144,6 +144,7 @@ class InstructorLoad {
   final int studentCount;
   final int sessionCount;
   final int classesNeedingAttention;
+  final double attendanceRate;
   final List<String> classNames;
 
   const InstructorLoad({
@@ -154,6 +155,7 @@ class InstructorLoad {
     required this.studentCount,
     required this.sessionCount,
     required this.classesNeedingAttention,
+    required this.attendanceRate,
     required this.classNames,
   });
 
@@ -165,9 +167,33 @@ class InstructorLoad {
         studentCount: _asInt(json['student_count']),
         sessionCount: _asInt(json['session_count']),
         classesNeedingAttention: _asInt(json['classes_needing_attention']),
+        attendanceRate: _asDouble(json['attendance_rate']),
         classNames: (json['class_names'] as List<dynamic>? ?? [])
             .map((e) => '$e')
             .toList(),
+      );
+}
+
+/// One point on the campus attendance trend line.
+class AttendanceTrendPoint {
+  final String date;
+  final double attendanceRate;
+  final int present;
+  final int expected;
+
+  const AttendanceTrendPoint({
+    required this.date,
+    required this.attendanceRate,
+    required this.present,
+    required this.expected,
+  });
+
+  factory AttendanceTrendPoint.fromJson(Map<String, dynamic> json) =>
+      AttendanceTrendPoint(
+        date: json['date'] as String? ?? '',
+        attendanceRate: _asDouble(json['attendance_rate']),
+        present: _asInt(json['present']),
+        expected: _asInt(json['expected']),
       );
 }
 
@@ -175,11 +201,13 @@ class DirectorOverview {
   final CampusSummary summary;
   final List<InstructorLoad> instructors;
   final List<ClassOversight> classes;
+  final List<AttendanceTrendPoint> trend;
 
   const DirectorOverview({
     required this.summary,
     required this.instructors,
     required this.classes,
+    required this.trend,
   });
 
   factory DirectorOverview.fromJson(Map<String, dynamic> json) =>
@@ -192,6 +220,9 @@ class DirectorOverview {
             .toList(),
         classes: (json['classes'] as List<dynamic>? ?? [])
             .map((e) => ClassOversight.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        trend: (json['attendance_trend'] as List<dynamic>? ?? [])
+            .map((e) => AttendanceTrendPoint.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 }
@@ -264,6 +295,158 @@ class ClassSessionBreakdown {
       );
 }
 
+/// One activity inside a student's day, shown when their row is expanded.
+class DailyRecordSession {
+  final String activity;
+  final String activityDate;
+  final String activityTime;
+  final String status;
+  final bool attended;
+  final bool excused;
+  final String timeIn;
+  final String timeOut;
+  final String presenceStatus;
+  final int respondedChecks;
+  final int missedChecks;
+  final bool selfieVerified;
+  final String remarks;
+  final String sessionLatitude;
+  final String sessionLongitude;
+
+  const DailyRecordSession({
+    required this.activity,
+    required this.activityDate,
+    required this.activityTime,
+    required this.status,
+    required this.attended,
+    required this.excused,
+    required this.timeIn,
+    required this.timeOut,
+    required this.presenceStatus,
+    required this.respondedChecks,
+    required this.missedChecks,
+    required this.selfieVerified,
+    required this.remarks,
+    required this.sessionLatitude,
+    required this.sessionLongitude,
+  });
+
+  factory DailyRecordSession.fromJson(Map<String, dynamic> json) =>
+      DailyRecordSession(
+        activity: json['activity'] as String? ?? '',
+        activityDate: json['activity_date'] as String? ?? '',
+        activityTime: json['activity_time'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        attended: json['attended'] == true,
+        excused: json['excused'] == true,
+        timeIn: json['time_in'] as String? ?? '',
+        timeOut: json['time_out'] as String? ?? '',
+        presenceStatus: json['presence_status'] as String? ?? '',
+        respondedChecks: _asInt(json['responded_checks']),
+        missedChecks: _asInt(json['missed_checks']),
+        selfieVerified: json['selfie_verified'] == true,
+        remarks: json['remarks'] as String? ?? '',
+        sessionLatitude: json['session_latitude'] as String? ?? '',
+        sessionLongitude: json['session_longitude'] as String? ?? '',
+      );
+}
+
+/// One student's whole day: a single row with every activity tucked inside.
+class DailyRecordStudent {
+  final String studentId;
+  final String studentName;
+  final String courseAndSection;
+  final String className;
+  final String component;
+  final String instructorName;
+  final String status;
+  final int attendedCount;
+  final int missedCount;
+  final List<DailyRecordSession> sessions;
+
+  const DailyRecordStudent({
+    required this.studentId,
+    required this.studentName,
+    required this.courseAndSection,
+    required this.className,
+    required this.component,
+    required this.instructorName,
+    required this.status,
+    required this.attendedCount,
+    required this.missedCount,
+    required this.sessions,
+  });
+
+  factory DailyRecordStudent.fromJson(Map<String, dynamic> json) =>
+      DailyRecordStudent(
+        studentId: json['student_id'] as String? ?? '',
+        studentName: json['student_name'] as String? ?? '',
+        courseAndSection: json['course_and_section'] as String? ?? '',
+        className: json['class_name'] as String? ?? '',
+        component: json['component'] as String? ?? '',
+        instructorName: json['instructor_name'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        attendedCount: _asInt(json['attended_count']),
+        missedCount: _asInt(json['missed_count']),
+        sessions: (json['sessions'] as List<dynamic>? ?? [])
+            .map((e) => DailyRecordSession.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class DailyRecordsSummary {
+  final int students;
+  final int present;
+  final int absent;
+  final int partial;
+  final int excused;
+
+  const DailyRecordsSummary({
+    required this.students,
+    required this.present,
+    required this.absent,
+    required this.partial,
+    required this.excused,
+  });
+
+  factory DailyRecordsSummary.fromJson(Map<String, dynamic> json) =>
+      DailyRecordsSummary(
+        students: _asInt(json['students']),
+        present: _asInt(json['present']),
+        absent: _asInt(json['absent']),
+        partial: _asInt(json['partial']),
+        excused: _asInt(json['excused']),
+      );
+}
+
+class DailyRecords {
+  final String date;
+  final String component;
+  final int classId;
+  final DailyRecordsSummary summary;
+  final List<DailyRecordStudent> records;
+
+  const DailyRecords({
+    required this.date,
+    required this.component,
+    required this.classId,
+    required this.summary,
+    required this.records,
+  });
+
+  factory DailyRecords.fromJson(Map<String, dynamic> json) => DailyRecords(
+        date: json['date'] as String? ?? '',
+        component: json['component'] as String? ?? '',
+        classId: _asInt(json['class_id']),
+        summary: DailyRecordsSummary.fromJson(
+          json['summary'] as Map<String, dynamic>? ?? const {},
+        ),
+        records: (json['records'] as List<dynamic>? ?? [])
+            .map((e) => DailyRecordStudent.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 class DirectorService {
   static const _headers = {'ngrok-skip-browser-warning': 'true'};
 
@@ -303,6 +486,33 @@ class DirectorService {
       throw Exception('Could not load sessions (${response.statusCode})');
     }
     return ClassSessionBreakdown.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  /// One day of campus attendance, rolled up to one row per student.
+  static Future<DailyRecords> fetchDailyRecords({
+    String? component,
+    int? classId,
+    String? date,
+  }) async {
+    final response = await http
+        .get(
+          Uri.parse(
+            ApiConfig.directorRecordsUrl(
+              component: component,
+              classId: classId,
+              date: date,
+            ),
+          ),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      throw Exception('Could not load records (${response.statusCode})');
+    }
+    return DailyRecords.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
