@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../models/user_model.dart';
+import 'info_hint.dart';
 
 /// Lets a student explain why they missed a session, or why they failed the
 /// random presence checks while they were actually there.
@@ -225,8 +226,15 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
       title: Row(
         children: [
           Icon(Icons.drafts_outlined, color: Colors.grey.shade600),
-          SizedBox(width: 8),
-          Expanded(child: Text('File an excuse', style: TextStyle(fontSize: 18))),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('File an excuse', style: TextStyle(fontSize: 18)),
+          ),
+          const InfoHint(
+            message:
+                'Your instructor decides whether this is approved. Your '
+                'record only changes if they approve it.',
+          ),
         ],
       ),
       content: SingleChildScrollView(
@@ -339,21 +347,6 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
                 style: const TextStyle(color: Colors.red, fontSize: 12),
               ),
             ],
-            const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.info_outline, size: 14, color: Colors.grey.shade600),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'Your instructor decides whether this is approved. Your '
-                    'record only changes if they approve it.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
-                  ),
-                ),
-              ],
-            ),
           ],
         ),
       ),

@@ -8,6 +8,7 @@ import '../../config/campus_config.dart';
 import '../../models/class_model.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
+import '../../widgets/info_hint.dart';
 
 class InstructorSettingsScreen extends StatefulWidget {
   final UserModel user;
@@ -255,21 +256,16 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          "When Does It Start?",
-          style: TextStyle(
+        const InfoHeading(
+          title: "When Does It Start?",
+          titleStyle: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: Colors.blue,
           ),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: _InfoHint(
-            message:
-                "Students are notified when the activity opens, and again the "
-                "set minutes beforehand. Nobody can time in before the start.",
-          ),
+          message:
+              "Students are notified when the activity opens, and again the "
+              "set minutes beforehand. Nobody can time in before the start.",
         ),
         const SizedBox(height: 12),
         InkWell(
@@ -336,7 +332,7 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
             padding: EdgeInsets.only(top: 8),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: _InfoHint(
+              child: InfoHint(
                 iconSize: 18,
                 message:
                     'No random presence checks for this session. Students just '
@@ -498,20 +494,15 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                 key: _formKey,
                 child: ListView(
                   children: [
-                    const Text(
-                      "Which Class?",
-                      style: TextStyle(
+                    const InfoHeading(
+                      title: "Which Class?",
+                      titleStyle: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: Colors.blue,
                       ),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: _InfoHint(
-                        message: "Only students enrolled in the class you pick "
-                            "will see this session.",
-                      ),
+                      message: "Only students enrolled in the class you pick "
+                          "will see this session.",
                     ),
                     const SizedBox(height: 12),
                     _buildClassPicker(),
@@ -520,21 +511,16 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
                     _buildScheduleSection(),
                     const SizedBox(height: 32),
 
-                    const Text(
-                      "Set Meeting Location",
-                      style: TextStyle(
+                    const InfoHeading(
+                      title: "Set Meeting Location",
+                      titleStyle: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: Colors.blue,
                       ),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: _InfoHint(
-                        message: "Tap the map to set where students should "
-                            "check in today. The map is limited to ISU "
-                            "Cauayan Campus.",
-                      ),
+                      message: "Tap the map to set where students should "
+                          "check in today. The map is limited to ISU "
+                          "Cauayan Campus.",
                     ),
                     const SizedBox(height: 12),
 
@@ -725,70 +711,4 @@ class _InstructorSettingsScreenState extends State<InstructorSettingsScreen> {
 enum _SessionType {
   cleaning,
   lecturing,
-}
-
-/// A tappable info icon that reveals an explanation in a dialog when tapped.
-///
-/// Keeps the form compact: the explanatory text lives behind the icon instead
-/// of taking up a paragraph on screen.
-class _InfoHint extends StatelessWidget {
-  final String message;
-  final double iconSize;
-
-  const _InfoHint({required this.message, this.iconSize = 16});
-
-  static const Color _isuGreen = Color(0xFF006837);
-
-  /// Shows the explanation for [message] in a rounded dialog.
-  static void showInfo(BuildContext context, String message) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.info_outline, color: _isuGreen),
-            SizedBox(width: 8),
-            Text('Good to know', style: TextStyle(fontSize: 18)),
-          ],
-        ),
-        content: Text(
-          message,
-          style: const TextStyle(
-            fontSize: 14,
-            color: Colors.black87,
-            height: 1.4,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text(
-              'Close',
-              style: TextStyle(
-                color: _isuGreen,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () => showInfo(context, message),
-      borderRadius: BorderRadius.circular(20),
-      child: Padding(
-        padding: const EdgeInsets.all(2),
-        child: Icon(
-          Icons.info_outline,
-          size: iconSize,
-          color: Colors.grey.shade600,
-        ),
-      ),
-    );
-  }
 }

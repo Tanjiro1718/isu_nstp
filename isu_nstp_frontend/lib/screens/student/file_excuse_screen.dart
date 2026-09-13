@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
 import '../../widgets/excuse_dialog.dart';
+import '../../widgets/info_hint.dart';
 
 /// Lets a student file an excuse letter in advance for an upcoming session
 /// they know they cannot attend, with an optional file attachment.
@@ -175,32 +176,17 @@ class _FileExcuseScreenState extends State<FileExcuseScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.blue.shade50,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.blue.shade200),
+        const InfoHeading(
+          title: 'Filing an Excuse',
+          titleStyle: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.blue,
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.info_outline, size: 20, color: Colors.grey.shade600),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Pick an upcoming session you cannot attend, then explain why. '
-                  'You can attach a medical certificate or a picture as proof. '
-                  'Your instructor will review it.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.blue.shade900,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          message:
+              'Pick an upcoming session you cannot attend, then explain why. '
+              'You can attach a medical certificate or a picture as proof. '
+              'Your instructor will review it.',
         ),
         const SizedBox(height: 16),
         ..._sessions.map(
