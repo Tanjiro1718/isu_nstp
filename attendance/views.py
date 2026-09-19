@@ -65,6 +65,7 @@ from .fcm_utils import (
     send_leave_request_notification,
     send_leave_reviewed,
     send_check_in_notification,
+    notify_session_created,
 )
 from .presence import dispatch_due_presence_checks
 from .session_alerts import dispatch_due_session_alerts
@@ -1682,6 +1683,16 @@ class AttendanceSessionAPIView(APIView):
             except Exception as e:
                 # A push failure must never lose the session just saved.
                 print(f"Session alert dispatch after create failed: {e}")
+
+            # Future-dated sessions also push the scheduled time at creation,
+            # so the class learns of it on their phones right away. A session
+            # opening immediately is skipped: the 'now open' push above is the
+            # message for it, and two overlapping notifications would be spam.
+            if session.date_time > timezone.now():
+                try:
+                    notify_session_created(session)
+                except Exception as e:
+                    print(f"Session-created push after create failed: {e}")
 
             session.refresh_from_db()
             return Response(SessionSerializer(session).data, status=201)

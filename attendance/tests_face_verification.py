@@ -59,7 +59,7 @@ class FaceVerificationCheckInTestBase(TestCase):
             status='active',
         )
 
-        # Started one minute ago: inside the 5-minute photo window and past the
+        # Started one minute ago: inside the 15-minute photo window and past the
         # early check-in gate, with the geofence centred on the posted coords.
         self.session = AttendanceSession.objects.create(
             instructor=self.instructor,

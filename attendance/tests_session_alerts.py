@@ -335,6 +335,57 @@ class DailyResetTests(SessionAlertTestBase):
         self.assertEqual(response.data['id'], session.pk)
 
 
+class SessionCreatedPushTests(SessionAlertTestBase):
+    """The push that announces a scheduled activity the moment it is created."""
+
+    def _create_session(self, **overrides):
+        payload = {
+            'instructor': self.instructor.id,
+            'class_group': self.class_group.id,
+            'title': 'Coastal Clean-up',
+            'date_time': (timezone.now() + timedelta(hours=2)).isoformat(),
+            'target_latitude': 17.0,
+            'target_longitude': 121.0,
+            'radius_meters': 100,
+        }
+        payload.update(overrides)
+        return self.client.post(
+            '/api/attendance/session/current/', payload, format='json'
+        )
+
+    def test_future_session_pushes_the_scheduled_time(self):
+        """A future-dated activity is announced to the class immediately."""
+        with patch('attendance.views.notify_session_created') as push:
+            response = self._create_session()
+
+        self.assertEqual(response.status_code, 201)
+        push.assert_called_once()
+        session = AttendanceSession.objects.get(pk=response.data['id'])
+        self.assertEqual(push.call_args[0][0].pk, session.pk)
+
+    def test_immediate_session_skips_the_created_push(self):
+        """
+        An activity starting now is announced by the 'now open' push instead -
+        two overlapping notifications for the same moment would be spam.
+        """
+        with patch('attendance.views.notify_session_created') as push:
+            response = self._create_session(
+                date_time=(timezone.now() - timedelta(minutes=1)).isoformat()
+            )
+
+        self.assertEqual(response.status_code, 201)
+        push.assert_not_called()
+
+    def test_push_failure_does_not_lose_the_session(self):
+        """A dead FCM token (or any push error) must never roll back the save."""
+        with patch(
+            'attendance.views.notify_session_created', side_effect=Exception('boom')
+        ):
+            response = self._create_session()
+
+        self.assertEqual(response.status_code, 201)
+
+
 class ReminderSettingTests(SessionAlertTestBase):
     """What the instructor's form is allowed to send."""
 

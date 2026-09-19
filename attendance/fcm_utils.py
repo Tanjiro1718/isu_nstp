@@ -229,6 +229,41 @@ def _broadcast_to_class(class_group, title, body, data):
     return sent
 
 
+def notify_session_created(session):
+    """
+    Tells the class the moment an instructor schedules an activity.
+
+    Fired immediately on creation, not from the timer sweep, so a student who
+    was not watching the app still learns the scheduled time from their phone.
+    The body is absolute rather than a countdown: if FCM delivers this late,
+    "scheduled for 9:00 AM" stays true where "in 5 minutes" never would. An
+    activity that starts right away skips this - the 'now open' push is the
+    message for that case.
+    """
+    class_group = session.class_group
+    if class_group is None:
+        return 0
+
+    when = timezone.localtime(session.date_time).strftime('%I:%M %p')
+
+    return _broadcast_to_class(
+        class_group,
+        title=f"New session scheduled: {session.title}",
+        body=(
+            f"{session.title} ({class_group.name}) is scheduled for {when}. "
+            f"Watch for the reminder before it opens."
+        ),
+        data={
+            'type': 'attendance_session_created',
+            'session_id': session.id,
+            'session_title': session.title,
+            'class_id': class_group.id,
+            'class_name': class_group.name,
+            'date_time': session.date_time.isoformat(),
+        },
+    )
+
+
 def notify_session_reminder(session):
     """
     Heads-up sent `reminder_minutes` before an activity opens.

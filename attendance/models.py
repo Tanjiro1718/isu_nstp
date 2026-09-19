@@ -131,7 +131,7 @@ class AttendanceSession(models.Model):
 
     # --- Presence verification rules ---
     # How long after the session opens a student may still submit their selfie.
-    photo_window_minutes = models.PositiveIntegerField(default=5)
+    photo_window_minutes = models.PositiveIntegerField(default=15)
     # Fixed 4-hour activity length. Set by the server, not the instructor, so
     # the presence schedule below always has a predictable window to fill.
     duration_minutes = models.PositiveIntegerField(
