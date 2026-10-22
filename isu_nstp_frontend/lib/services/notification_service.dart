@@ -78,7 +78,7 @@ Future<void> showLocalNotification(RemoteMessage message) async {
 }
 
 class NotificationService {
-  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
+  FirebaseMessaging get _firebaseMessaging => FirebaseMessaging.instance;
 
   /// Plugin used to surface notifications while the app is foregrounded.
   static final FlutterLocalNotificationsPlugin localNotifications =
@@ -86,6 +86,14 @@ class NotificationService {
 
   /// Call this in `main.dart` to initialize all notification listeners
   Future<void> initialize() async {
+    // Push is native-only in this build. The web app still receives presence
+    // prompts through the dashboard's 20-second polling loop, so attendance
+    // continues to work in Safari without push permissions.
+    if (kIsWeb) {
+      debugPrint('Push notifications are not enabled for the web build.');
+      return;
+    }
+
     // 0. Create the Android channel so the backend's `attendance_alerts`
     //    channel reference resolves on Android 8+. Without this the OS drops or
     //    demotes every push (no heads-up alert, no sound, silent or hidden).
@@ -145,6 +153,7 @@ class NotificationService {
 
   /// Request push notification permissions from the user
   Future<bool> requestPermission() async {
+    if (kIsWeb) return false;
     NotificationSettings settings = await _firebaseMessaging.requestPermission(
       alert: true,
       announcement: false,
@@ -169,6 +178,7 @@ class NotificationService {
 
   /// Retrieves the device FCM token (for registration)
   Future<String?> getDeviceToken() async {
+    if (kIsWeb) return null;
     try {
       // Ensure permissions are granted before requesting token
       NotificationSettings settings = await _firebaseMessaging.getNotificationSettings();

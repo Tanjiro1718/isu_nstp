@@ -1,7 +1,5 @@
-import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:face_detection_tflite/face_detection_tflite.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -89,10 +87,21 @@ class FaceVerificationService {
   /// Never throws for a normal face check; on any failure it returns
   /// [FaceVerifyStatus.error] so the check-in can still proceed.
   Future<FaceVerifyResult> verifySelfie({
-    required File selfie,
+    required Uint8List selfieBytes,
     required int studentUserId,
     required String? referenceUrl,
   }) async {
+    // The face-embedding API in face_detection_tflite is native-only. Rather
+    // than failing the whole check-in on the web build, record it as an
+    // unverified time-in so an instructor can review the selfie.
+    if (kIsWeb) {
+      return const FaceVerifyResult(
+        status: FaceVerifyStatus.unavailable,
+        message: 'Face matching is not available in the browser. '
+            'Your time-in was recorded and flagged for review.',
+      );
+    }
+
     final resolvedReference = _resolveUrl(referenceUrl);
     if (resolvedReference == null || resolvedReference.isEmpty) {
       return const FaceVerifyResult(
@@ -118,7 +127,6 @@ class FaceVerificationService {
         );
       }
 
-      final selfieBytes = await selfie.readAsBytes();
       final selfieEmbedding = await _embedFromBytes(detector, selfieBytes);
       if (selfieEmbedding == null) {
         return const FaceVerifyResult(

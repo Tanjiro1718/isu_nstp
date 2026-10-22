@@ -117,6 +117,16 @@
         .instructions li {
             margin-bottom: 8px;
         }
+        .open-app {
+            display: inline-block;
+            background: #006837;
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
+            padding: 12px 28px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
         .footer {
             color: #a0aec0;
             font-size: 12px;
@@ -169,10 +179,12 @@
             <div class="join-code">{{ class_group.join_code|upper }}</div>
         </div>
 
+        <a class="open-app" href="/">Open ISU NSTP</a>
+
         <div class="instructions">
             <div class="instructions-title">📱 How to Join This Class:</div>
             <ol>
-                <li>Open the <strong>ISU NSTP App</strong> on your phone</li>
+                <li>Open the <strong>ISU NSTP App</strong> (or tap the button above)</li>
                 <li>Log in to your student account</li>
                 <li>Tap <strong>"Join Class"</strong> on your dashboard</li>
                 <li>Enter the join code shown above</li>

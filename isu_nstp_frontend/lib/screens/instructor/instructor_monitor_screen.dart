@@ -1,15 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
 import '../../services/headcount_service.dart';
+import '../../utils/file_download.dart';
 
 class InstructorMonitorScreen extends StatefulWidget {
   /// Needed to authorise opening the time-out window. Optional so the screen
@@ -660,14 +658,12 @@ class _InstructorMonitorScreenState extends State<InstructorMonitorScreen> {
     final csv = rows.map((row) => row.map(_escapeCsv).join(',')).join('\r\n');
 
     try {
-      final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/${_exportFilename()}');
       // Excel only honours UTF-8 in a CSV when the BOM is present; without it
       // any non-ASCII character in a name or address is mangled on open.
-      await file.writeAsString('\uFEFF$csv');
-
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'text/csv')],
+      await saveOrShareFile(
+        bytes: utf8.encode('\uFEFF$csv'),
+        filename: _exportFilename(),
+        mimeType: 'text/csv',
         subject: 'NSTP Attendance Logs',
         text: 'NSTP attendance logs (${logs.length} record(s)).',
       );

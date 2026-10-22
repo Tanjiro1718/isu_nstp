@@ -1,8 +1,16 @@
+import 'package:flutter/foundation.dart';
+
 class ApiConfig {
   static String get baseUrl {
     const override = String.fromEnvironment('API_BASE_URL');
     if (override.isNotEmpty) {
       return override;
+    }
+
+    // The web build is served by the Django app itself, so the API lives on
+    // the same origin (no CORS hop and no hard-coded host in the PWA).
+    if (kIsWeb) {
+      return Uri.base.origin;
     }
 
     // Production backend hosted on Render.

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 /// Full-screen front-camera capture for a presence check.
 ///
 /// The student must snap a live selfie to prove they are physically present.
-/// Returns the captured image `File` when the student taps "Use this
+/// Returns the captured image bytes when the student taps "Use this
 /// photo", or `null` if they back out / retake / the camera fails.
 class PresenceCheckPhotoScreen extends StatefulWidget {
   const PresenceCheckPhotoScreen({super.key});
@@ -19,7 +19,7 @@ class PresenceCheckPhotoScreen extends StatefulWidget {
 
 class _PresenceCheckPhotoScreenState extends State<PresenceCheckPhotoScreen> {
   CameraController? _controller;
-  XFile? _captured;
+  Uint8List? _capturedBytes;
   bool _isInitializing = true;
   String _error = '';
 
@@ -60,8 +60,9 @@ class _PresenceCheckPhotoScreenState extends State<PresenceCheckPhotoScreen> {
     if (controller == null || !controller.value.isInitialized) return;
     try {
       final shot = await controller.takePicture();
+      final bytes = await shot.readAsBytes();
       if (!mounted) return;
-      setState(() => _captured = shot);
+      setState(() => _capturedBytes = bytes);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -71,7 +72,7 @@ class _PresenceCheckPhotoScreenState extends State<PresenceCheckPhotoScreen> {
   }
 
   Future<void> _retake() async {
-    setState(() => _captured = null);
+    setState(() => _capturedBytes = null);
   }
 
   @override
@@ -84,7 +85,8 @@ class _PresenceCheckPhotoScreenState extends State<PresenceCheckPhotoScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_captured == null ? 'Confirm Presence' : 'Review Photo'),
+        title: Text(
+            _capturedBytes == null ? 'Confirm Presence' : 'Review Photo'),
         backgroundColor: Colors.orange.shade800,
         foregroundColor: Colors.white,
       ),
@@ -116,7 +118,7 @@ class _PresenceCheckPhotoScreenState extends State<PresenceCheckPhotoScreen> {
                     ),
                   ),
                 )
-              : _captured != null
+              : _capturedBytes != null
                   ? _buildReview()
                   : _buildCapture(),
     );
@@ -179,7 +181,7 @@ class _PresenceCheckPhotoScreenState extends State<PresenceCheckPhotoScreen> {
               padding: const EdgeInsets.all(24),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
-                child: Image.file(File(_captured!.path)),
+                child: Image.memory(_capturedBytes!),
               ),
             ),
           ),
@@ -200,7 +202,7 @@ class _PresenceCheckPhotoScreenState extends State<PresenceCheckPhotoScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: () => Navigator.pop(context, _captured),
+                    onPressed: () => Navigator.pop(context, _capturedBytes),
                     style: FilledButton.styleFrom(
                       backgroundColor: Colors.orange.shade800,
                       padding: const EdgeInsets.symmetric(vertical: 14),

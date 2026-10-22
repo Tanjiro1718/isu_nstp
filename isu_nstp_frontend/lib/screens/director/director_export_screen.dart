@@ -1,13 +1,11 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../config/api_config.dart';
 import '../../services/director_service.dart';
+import '../../utils/file_download.dart';
 
 /// Director's campus-wide attendance export.
 ///
@@ -142,14 +140,13 @@ class _DirectorExportScreenState extends State<DirectorExportScreen> {
           .timeout(const Duration(seconds: 45));
 
       if (response.statusCode == 200) {
-        final tempDir = await getTemporaryDirectory();
         final filename = _filename(response) ?? 'attendance_export.csv';
-        final file = File('${tempDir.path}/$filename');
-        await file.writeAsBytes(response.bodyBytes);
 
         if (!mounted) return;
-        await Share.shareXFiles(
-          [XFile(file.path)],
+        await saveOrShareFile(
+          bytes: response.bodyBytes,
+          filename: filename,
+          mimeType: 'text/csv',
           subject: 'Attendance Export',
         );
       } else {

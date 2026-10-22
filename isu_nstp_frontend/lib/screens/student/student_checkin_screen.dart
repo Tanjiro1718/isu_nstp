@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:camera/camera.dart';
@@ -230,13 +230,14 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
     try {
       // Step 1: Snap verification selfie
       final XFile image = await _cameraController!.takePicture();
+      final Uint8List selfieBytes = await image.readAsBytes();
 
       // Step 2: Verify the face on-device (MediaPipe). Never blocks time-in:
       // a mismatch, a missing reference, or even no face in frame still lets
       // the student check in, but marks the record for instructor review.
       setState(() => _statusMessage = "Verifying face...");
       final faceCheck = await FaceVerificationService.instance.verifySelfie(
-        selfie: File(image.path),
+        selfieBytes: selfieBytes,
         studentUserId: widget.user.id,
         referenceUrl: widget.user.idPictureUrl,
       );
@@ -259,9 +260,14 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
       // TODO: If Django's [IsAuthenticated] blocks this, we will need to pass your actual JWT token here later.
       // request.headers['Authorization'] = 'Bearer YOUR_ACTUAL_TOKEN';
 
-      // Attach file element binary stream
+      // Attach the selfie bytes. Bytes work identically on native and web,
+      // where an XFile path is only a blob URL that cannot be read by dart:io.
       request.files.add(
-        await http.MultipartFile.fromPath('selfie', File(image.path).path),
+        http.MultipartFile.fromBytes(
+          'selfie',
+          selfieBytes,
+          filename: 'selfie.jpg',
+        ),
       );
 
       var response = await request.send();

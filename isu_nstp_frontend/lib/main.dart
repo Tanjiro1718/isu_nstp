@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
@@ -19,11 +20,14 @@ void main() async {
   // 1. Ensure Flutter bindings are initialized first
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. Initialize Firebase
-  await Firebase.initializeApp(
-    // If you configured Firebase CLI, uncomment the line below:
-    // options: DefaultFirebaseOptions.currentPlatform, 
-  );
+  // 2. Initialize Firebase (native only). The web build has no Firebase web
+  // app configured yet, and initializing without options throws on web.
+  if (!kIsWeb) {
+    await Firebase.initializeApp(
+      // If you configured Firebase CLI, uncomment the line below:
+      // options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
 
   // 3. Initialize Notification Service (permissions, FCM listeners, background handlers)
   await NotificationService().initialize();

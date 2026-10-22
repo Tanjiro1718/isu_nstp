@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -197,23 +197,23 @@ class _StudentDashboardState extends State<StudentDashboard> {
     setState(() => _isRespondingToCheck = true);
 
     // A live front-camera selfie is mandatory proof for every presence check.
-    File? selfie;
+    Uint8List? selfieBytes;
     try {
-      selfie = await Navigator.push<dynamic>(
+      selfieBytes = await Navigator.push<Uint8List?>(
         context,
         MaterialPageRoute(
           builder: (context) => const PresenceCheckPhotoScreen(),
         ),
       );
     } catch (_) {
-      selfie = null;
+      selfieBytes = null;
     }
 
     if (!mounted) {
       return;
     }
 
-    if (selfie == null) {
+    if (selfieBytes == null) {
       setState(() => _isRespondingToCheck = false);
       return; // Student backed out / camera unavailable.
     }
@@ -221,7 +221,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
     final result = await PresenceService.respondToCheck(
       checkId: checkId,
       studentUserId: _currentUser.id,
-      selfie: selfie,
+      selfie: selfieBytes,
     );
 
     if (!mounted) return;

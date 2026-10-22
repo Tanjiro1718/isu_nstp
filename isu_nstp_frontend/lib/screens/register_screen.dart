@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -42,7 +42,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _acceptTerms = false;
   String _uploadStatus = '';
 
-  File? _idImageFile;
+  Uint8List? _idImageBytes;
+  String _idImageName = 'id_picture.jpg';
   final ImagePicker _picker = ImagePicker();
 
   @override
@@ -83,8 +84,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
 
     if (pickedFile != null) {
+      final bytes = await pickedFile.readAsBytes();
+      if (!mounted) return;
       setState(() {
-        _idImageFile = File(pickedFile.path);
+        _idImageBytes = bytes;
+        _idImageName =
+            pickedFile.name.isEmpty ? 'id_picture.jpg' : pickedFile.name;
       });
     }
   }
@@ -117,7 +122,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (_idImageFile == null) {
+    if (_idImageBytes == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please upload the front picture of your ID.'),
@@ -166,9 +171,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       request.fields['accept_terms'] = _acceptTerms ? 'true' : 'false';
 
       // File payload
-      request.files.add(await http.MultipartFile.fromPath(
+      request.files.add(http.MultipartFile.fromBytes(
         'id_picture_front',
-        _idImageFile!.path,
+        _idImageBytes!,
+        filename: _idImageName,
       ));
 
       // Give the FCM fetch this little extra window, then move on regardless.
@@ -733,14 +739,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
                 ),
                 const SizedBox(height: 12),
-                _idImageFile != null
+                _idImageBytes != null
                     ? Stack(
                         alignment: Alignment.topRight,
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.file(
-                              _idImageFile!,
+                            child: Image.memory(
+                              _idImageBytes!,
                               height: 120,
                               width: double.infinity,
                               fit: BoxFit.cover,
@@ -748,7 +754,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           ),
                           IconButton(
                             icon: const Icon(Icons.cancel, color: Colors.red),
-                            onPressed: () => setState(() => _idImageFile = null),
+                            onPressed: () =>
+                                setState(() => _idImageBytes = null),
                           )
                         ],
                       )

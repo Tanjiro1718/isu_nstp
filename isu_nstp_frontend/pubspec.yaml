@@ -60,6 +60,7 @@ dependencies:
   permission_handler: ^11.3.1
   # Real app version/build shown on the About screen.
   package_info_plus: ^8.1.0
+  web: ^1.1.1
 
 
 dev_dependencies:

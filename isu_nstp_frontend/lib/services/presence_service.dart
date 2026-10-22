@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -111,7 +111,7 @@ class PresenceService {
   static Future<PresenceActionResult> respondToCheck({
     required int checkId,
     required int studentUserId,
-    required File selfie,
+    required Uint8List selfie,
   }) async {
     try {
       final position = await Geolocator.getCurrentPosition(
@@ -127,7 +127,11 @@ class PresenceService {
       request.fields['latitude'] = position.latitude.toString();
       request.fields['longitude'] = position.longitude.toString();
       request.files.add(
-        await http.MultipartFile.fromPath('response_photo', selfie.path),
+        http.MultipartFile.fromBytes(
+          'response_photo',
+          selfie,
+          filename: 'presence.jpg',
+        ),
       );
 
       final streamed = await request.send().timeout(
@@ -156,7 +160,7 @@ class PresenceService {
   static Future<PresenceActionResult> checkOut({
     required int recordId,
     required int studentUserId,
-    File? selfie,
+    Uint8List? selfie,
   }) async {
     try {
       final position = await Geolocator.getCurrentPosition(
@@ -174,7 +178,11 @@ class PresenceService {
 
       if (selfie != null) {
         request.files.add(
-          await http.MultipartFile.fromPath('selfie', selfie.path),
+          http.MultipartFile.fromBytes(
+            'selfie',
+            selfie,
+            filename: 'selfie.jpg',
+          ),
         );
       }
 

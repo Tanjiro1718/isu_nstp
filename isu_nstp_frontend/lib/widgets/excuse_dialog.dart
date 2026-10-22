@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -84,7 +84,7 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
   bool _submitting = false;
   String? _error;
 
-  File? _selectedFile;
+  Uint8List? _selectedFileBytes;
   String? _selectedFileName;
 
   @override
@@ -98,13 +98,14 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: _allowedExtensions,
+        withData: true,
       );
 
       if (!mounted) return;
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
-        if (file.path == null) {
+        if (file.bytes == null) {
           setState(() {
             _error = 'Could not read the selected file.';
           });
@@ -120,7 +121,7 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
         }
 
         setState(() {
-          _selectedFile = File(file.path!);
+          _selectedFileBytes = file.bytes;
           _selectedFileName = file.name;
           _error = null;
         });
@@ -135,7 +136,7 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
 
   void _removeFile() {
     setState(() {
-      _selectedFile = null;
+      _selectedFileBytes = null;
       _selectedFileName = null;
     });
   }
@@ -171,11 +172,11 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
       request.fields['session_id'] = '${widget.sessionId}';
       request.fields['reason'] = reason;
 
-      if (_selectedFile != null) {
+      if (_selectedFileBytes != null) {
         request.files.add(
-          await http.MultipartFile.fromPath(
+          http.MultipartFile.fromBytes(
             'attachment',
-            _selectedFile!.path,
+            _selectedFileBytes!,
             filename: _selectedFileName,
           ),
         );
@@ -291,7 +292,7 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
               ),
             ),
             const SizedBox(height: 10),
-            if (_selectedFile != null && _selectedFileName != null)
+            if (_selectedFileBytes != null && _selectedFileName != null)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),

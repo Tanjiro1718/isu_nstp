@@ -45,6 +45,9 @@ class ProfileLockService {
   /// "weak" biometrics. [isDeviceSupported] is true whenever a device credential
   /// exists, and since we allow the PIN fallback that is enough to prompt.
   static Future<bool> isBiometricAvailable() async {
+    // local_auth has no web implementation. Hide the option in the browser
+    // rather than showing a switch that can never succeed.
+    if (kIsWeb) return false;
     try {
       if (await _auth.isDeviceSupported()) return true;
       return await _auth.canCheckBiometrics;
@@ -63,6 +66,7 @@ class ProfileLockService {
   /// typically shows only fingerprint and PIN. Only iOS reliably distinguishes
   /// Face ID here.
   static Future<bool> hasBiometricEnrolled() async {
+    if (kIsWeb) return false;
     try {
       final available = await _auth.getAvailableBiometrics();
       return available.isNotEmpty;
@@ -98,6 +102,7 @@ class ProfileLockService {
     String reason = 'Verify your identity to view your profile details',
     bool biometricOnly = false,
   }) async {
+    if (kIsWeb) return LockResult.error;
     try {
       final didAuth = await _auth.authenticate(
         localizedReason: reason,

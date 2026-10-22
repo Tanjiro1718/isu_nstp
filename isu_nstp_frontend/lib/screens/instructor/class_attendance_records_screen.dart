@@ -1,13 +1,11 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
 import '../../models/class_model.dart';
 import '../../services/class_service.dart';
+import '../../utils/file_download.dart';
 
 class ClassAttendanceRecordsScreen extends StatefulWidget {
   final UserModel user;
@@ -162,16 +160,15 @@ class _ClassAttendanceRecordsScreenState
       );
 
       if (response.statusCode == 200) {
-        final tempDir = await getTemporaryDirectory();
         final safeName =
             _selectedClass!.name.replaceAll(RegExp(r'[^\w\s-]'), '_');
         final suffix = _selectedDate ?? 'all-dates';
         final filename = 'attendance_${safeName}_$suffix.csv';
-        final file = File('${tempDir.path}/$filename');
-        await file.writeAsBytes(response.bodyBytes);
 
-        await Share.shareXFiles(
-          [XFile(file.path)],
+        await saveOrShareFile(
+          bytes: response.bodyBytes,
+          filename: filename,
+          mimeType: 'text/csv',
           subject: 'Attendance Record: ${_selectedClass!.name}',
         );
       } else {
