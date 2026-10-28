@@ -79,6 +79,30 @@ class _ClassAttendanceRecordsScreenState
     }
   }
 
+  Future<Map<String, dynamic>> _fetchAttendance(
+    int classId, {
+    String? date,
+  }) async {
+    final url = ApiConfig.classAttendanceRecordsUrl(classId, date: date);
+    final response = await http.get(
+      Uri.parse(url),
+      headers: {'ngrok-skip-browser-warning': 'true'},
+    );
+
+    if (response.statusCode != 200) {
+      String message = 'Failed to load records';
+      try {
+        final error = jsonDecode(response.body);
+        if (error is Map && error['error'] != null) {
+          message = error['error'].toString();
+        }
+      } catch (_) {}
+      throw _AttendanceFetchException(message);
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<void> _loadRecords() async {
     if (_selectedClass == null) return;
 
@@ -88,36 +112,264 @@ class _ClassAttendanceRecordsScreenState
     });
 
     try {
-      final url = ApiConfig.classAttendanceRecordsUrl(
-        _selectedClass!.id,
-        date: _selectedDate,
-      );
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {'ngrok-skip-browser-warning': 'true'},
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        setState(() {
-          _records = (data['records'] as List<dynamic>)
-              .cast<Map<String, dynamic>>();
-          _summary = data['summary'] as Map<String, dynamic>?;
-          _loadingRecords = false;
-        });
-      } else {
-        final error = jsonDecode(response.body);
-        setState(() {
-          _errorMessage = error['error'] ?? 'Failed to load records';
-          _loadingRecords = false;
-        });
-      }
+      final data =
+          await _fetchAttendance(_selectedClass!.id, date: _selectedDate);
+      setState(() {
+        _records = (data['records'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        _summary = data['summary'] as Map<String, dynamic>?;
+        _loadingRecords = false;
+      });
+    } on _AttendanceFetchException catch (e) {
+      setState(() {
+        _errorMessage = e.message;
+        _loadingRecords = false;
+      });
     } catch (e) {
       setState(() {
         _errorMessage = 'Network error: $e';
         _loadingRecords = false;
       });
     }
+  }
+
+  String _isoDate(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String _displayDate(String isoDate) {
+    final parsed = DateTime.tryParse(isoDate);
+    if (parsed == null) return isoDate;
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[parsed.month - 1]} ${parsed.day}, ${parsed.year}';
+  }
+
+  Future<void> _showAbsentStudents() async {
+    final classGroup = _selectedClass;
+    if (classGroup == null) return;
+
+    final isToday = _selectedDate == null;
+    final date = _selectedDate ?? _isoDate(DateTime.now());
+
+    List<Map<String, dynamic>> records;
+    if (isToday) {
+      try {
+        final data = await _fetchAttendance(classGroup.id, date: date);
+        records = (data['records'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+      } on _AttendanceFetchException catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load absences: ${e.message}')),
+        );
+        return;
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load absences: $e')),
+        );
+        return;
+      }
+    } else {
+      records = _records;
+    }
+
+    if (!mounted) return;
+
+    final absent = records
+        .where((row) => row['attended'] != true && row['status'] == 'Absent')
+        .toList()
+      ..sort((a, b) {
+        final left = a['student_name']?.toString().toLowerCase() ?? '';
+        final right = b['student_name']?.toString().toLowerCase() ?? '';
+        return left.compareTo(right);
+      });
+    final excusedCount =
+        records.where((row) => row['status'] == 'Excused').length;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.75,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.person_off_outlined,
+                        color: Colors.orange.shade800,
+                        size: 26,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Absent Students',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${classGroup.name} • '
+                              '${isToday ? 'Today, ' : ''}'
+                              '${_displayDate(date)}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.orange.shade200),
+                        ),
+                        child: Text(
+                          '${absent.length}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                if (absent.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Center(
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.check_circle_outline,
+                            size: 40,
+                            color: Colors.green.shade400,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No absent students for ${_displayDate(date)}.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      itemCount: absent.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (_, index) => _absentRow(absent[index]),
+                    ),
+                  ),
+                if (excusedCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: Text(
+                      '$excusedCount approved excuse(s) on this day, not counted '
+                      'as absent.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _absentRow(Map<String, dynamic> record) {
+    final name = record['student_name']?.toString() ?? 'Unknown Student';
+    final studentId = record['student_id']?.toString() ?? '--';
+    final section = record['course_and_section']?.toString() ?? '';
+    final activity = record['activity']?.toString() ?? '';
+    final activityTime = record['activity_time']?.toString() ?? '';
+    final remarks = record['remarks']?.toString() ?? '';
+
+    final identity = [studentId, if (section.isNotEmpty) section].join(' • ');
+    final activityLine = [
+      if (activity.isNotEmpty) activity,
+      if (activityTime.isNotEmpty) activityTime,
+    ].join(' • ');
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      leading: CircleAvatar(
+        backgroundColor: Colors.orange.withValues(alpha: 0.15),
+        child: Text(
+          name.isNotEmpty ? name[0].toUpperCase() : '?',
+          style: TextStyle(
+            color: Colors.orange.shade900,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+      title: Text(
+        name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(identity, style: const TextStyle(fontSize: 12)),
+          if (activityLine.isNotEmpty)
+            Text(
+              activityLine,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
+          if (remarks.isNotEmpty)
+            Text(
+              remarks,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.orange.shade800,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickDate() async {
@@ -312,7 +564,12 @@ class _ClassAttendanceRecordsScreenState
               children: [
                 _summaryChip('Expected', expected, Colors.grey),
                 _summaryChip('Present', present, Colors.blue),
-                _summaryChip('Absent', absent, Colors.orange),
+                _summaryChip(
+                  'Absent',
+                  absent,
+                  Colors.orange,
+                  onTap: _showAbsentStudents,
+                ),
                 _summaryChip('Verified', verified, Colors.green),
                 if (failed > 0) _summaryChip('Failed', failed, Colors.red),
               ],
@@ -323,8 +580,13 @@ class _ClassAttendanceRecordsScreenState
     );
   }
 
-  Widget _summaryChip(String label, int count, Color color) {
-    return Column(
+  Widget _summaryChip(
+    String label,
+    int count,
+    Color color, {
+    VoidCallback? onTap,
+  }) {
+    final chip = Column(
       children: [
         Text(
           count.toString(),
@@ -334,8 +596,29 @@ class _ClassAttendanceRecordsScreenState
             color: color,
           ),
         ),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            if (onTap != null)
+              Icon(Icons.chevron_right, size: 14, color: color),
+          ],
+        ),
       ],
+    );
+
+    if (onTap == null) return chip;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: chip,
+      ),
     );
   }
 
@@ -473,4 +756,13 @@ class _ClassAttendanceRecordsScreenState
       ),
     );
   }
+}
+
+class _AttendanceFetchException implements Exception {
+  final String message;
+
+  _AttendanceFetchException(this.message);
+
+  @override
+  String toString() => message;
 }
