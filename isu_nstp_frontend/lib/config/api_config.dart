@@ -18,6 +18,9 @@ class ApiConfig {
   }
 
   static String get loginUrl => '$baseUrl/api/login/';
+  static String get deviceValidateUrl => '$baseUrl/api/device/validate/';
+  static String resetDeviceUrl(int userId) =>
+      '$baseUrl/api/users/$userId/reset-device/';
   static String get resetPasswordUrl => '$baseUrl/api/password-reset/';
   static String get attendanceCheckInUrl => '$baseUrl/api/attendance/check-in/';
   static String get attendanceLogsUrl => '$baseUrl/api/attendance/logs/';

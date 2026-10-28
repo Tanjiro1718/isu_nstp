@@ -41,6 +41,7 @@ from .serializers import (
 )
 
 from rest_framework.permissions import AllowAny
+from rest_framework.decorators import action
 from geopy.distance import geodesic
 from rest_framework import viewsets
 from django.contrib.auth import get_user_model
@@ -68,6 +69,15 @@ from .fcm_utils import (
     notify_session_created,
 )
 from .presence import dispatch_due_presence_checks
+from .device_binding import (
+    DeviceBindingError,
+    bind_on_login,
+    binding_summary,
+    device_error_response,
+    require_bound_device,
+    reset_binding,
+    validate_session_device,
+)
 from .session_alerts import dispatch_due_session_alerts
 from .password_policy import password_error
 from rest_framework.permissions import IsAuthenticated
@@ -993,13 +1003,30 @@ class LoginAPIView(APIView):
                 if not user.is_active:
                     return Response({'message': 'Account is disabled'}, status=status.HTTP_400_BAD_REQUEST)
 
-                # 3. Use UserSerializer to serialize the complete user data profile.
+                # 3. Students are bound to one device. Staff accounts are not.
+                # A mismatch is returned before the user data so the app can
+                # show the reset instructions without saving a session.
+                try:
+                    binding, device_secret, _ = bind_on_login(request, user)
+                except DeviceBindingError as exc:
+                    return device_error_response(exc)
+
+                # 4. Use UserSerializer to serialize the complete user data profile.
                 user_data = UserSerializer(user, context={'request': request}).data
 
-                return Response({
+                payload = {
                     'message': 'Login successful',
-                    'user': user_data  # Passes the complete serialized dictionary layout
-                }, status=status.HTTP_200_OK)
+                    'user': user_data,  # Passes the complete serialized dictionary layout
+                }
+                if binding is not None:
+                    payload['device_binding'] = {
+                        'device': binding_summary(binding),
+                    }
+                    # Returned exactly once, when this device is first bound.
+                    if device_secret:
+                        payload['device_binding']['device_secret'] = device_secret
+
+                return Response(payload, status=status.HTTP_200_OK)
             else:
                 print("Password check failed.")
                 return Response({'message': 'Invalid password'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1007,6 +1034,30 @@ class LoginAPIView(APIView):
         except User.DoesNotExist:
             print("Username not found in the database.")
             return Response({'message': 'Username does not exist'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeviceValidateAPIView(APIView):
+    """Confirms a restored session still belongs to the bound device."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response(
+                {'detail': 'user_id is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            binding = validate_session_device(request, user_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
+
+        return Response({
+            'valid': True,
+            'device': binding_summary(binding),
+        })
 
 
 class ProcessCheckInAPI(APIView):
@@ -1025,7 +1076,12 @@ class ProcessCheckInAPI(APIView):
             stud_lng = float(request.data.get('longitude'))
         except (ValueError, TypeError):
             return Response({"status": "error", "message": "Invalid coordinates format"}, status=400)
-        
+
+        try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
+
         try:
             session = AttendanceSession.objects.get(id=session_id)
             student_user = User.objects.get(id=student_id)
@@ -1196,6 +1252,11 @@ class PresenceStatusAPIView(APIView):
             return Response({'error': 'student_id is required'}, status=400)
 
         try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
+
+        try:
             profile = StudentProfile.objects.get(user_id=student_id)
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student not found'}, status=404)
@@ -1252,6 +1313,11 @@ class RespondPresenceCheckAPIView(APIView):
 
         if not check_id or not student_id:
             return Response({'error': 'check_id and student_id are required'}, status=400)
+
+        try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
 
         # A live front-camera photo is mandatory proof for every presence check.
         photo = request.FILES.get('response_photo')
@@ -1341,6 +1407,11 @@ class CheckOutAPIView(APIView):
 
         if not record_id or not student_id:
             return Response({'error': 'record_id and student_id are required'}, status=400)
+
+        try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
 
         try:
             record = AttendanceRecord.objects.select_related(
@@ -1722,6 +1793,44 @@ class UserViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(role=role)
             
         return queryset
+
+    @action(detail=True, methods=['post'], url_path='reset-device')
+    def reset_device(self, request, pk=None):
+        """Let an admin unbind a student so they can sign in on a new phone."""
+        admin_user_id = request.data.get('admin_user_id')
+        try:
+            admin_user = User.objects.get(pk=admin_user_id)
+        except (User.DoesNotExist, TypeError, ValueError):
+            return Response(
+                {'detail': 'An admin account is required.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if (
+            str(getattr(admin_user, 'role', '')).lower() != 'admin'
+            or not admin_user.is_active
+        ):
+            return Response(
+                {'detail': 'Only an active system admin can reset a device.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        student = self.get_object()
+        if str(getattr(student, 'role', '')).lower() != 'student':
+            return Response(
+                {'detail': 'Only student accounts have device bindings.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        had_binding = reset_binding(student)
+        return Response({
+            'message': (
+                'Device binding reset. The student can sign in on a new device.'
+                if had_binding
+                else 'This student had no device binding.'
+            ),
+            'reset': had_binding,
+        })
 
     # 🔑 TRIGGERED WHEN ADMIN APPROVES (PATCH /api/users/<id>/)
     def perform_update(self, serializer):
@@ -2666,6 +2775,11 @@ class StudentAttendanceHistoryAPIView(APIView):
             return Response({'error': 'student_id is required'}, status=400)
 
         try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
+
+        try:
             student_profile = StudentProfile.objects.get(user_id=student_id)
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student not found'}, status=404)
@@ -3495,6 +3609,11 @@ class StudentExcuseAPIView(APIView):
             return Response({'error': 'student_id is required'}, status=400)
 
         try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
+
+        try:
             profile = StudentProfile.objects.get(user_id=student_id)
         except StudentProfile.DoesNotExist:
             return Response({'error': 'Student not found'}, status=404)
@@ -3522,6 +3641,11 @@ class StudentExcuseAPIView(APIView):
                 {'error': 'student_id, session_id, and reason are required.'},
                 status=400,
             )
+
+        try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
 
         try:
             profile = StudentProfile.objects.select_related('user').get(user_id=student_id)
@@ -3848,6 +3972,11 @@ class RequestLeaveAPIView(APIView):
             )
 
         try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
+
+        try:
             profile = StudentProfile.objects.select_related('user').get(
                 user_id=student_id
             )
@@ -3952,6 +4081,11 @@ class LeaveLocationUpdateAPIView(APIView):
             )
 
         try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
+
+        try:
             leave = GeofenceLeaveRequest.objects.select_related(
                 'student__user'
             ).get(id=leave_id, student__user_id=student_id)
@@ -3998,6 +4132,11 @@ class ReturnToGeofenceAPIView(APIView):
                 {'error': 'student_id and leave_id are required.'},
                 status=400,
             )
+
+        try:
+            require_bound_device(request, student_id)
+        except DeviceBindingError as exc:
+            return device_error_response(exc)
 
         try:
             leave = GeofenceLeaveRequest.objects.select_related(

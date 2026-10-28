@@ -7,6 +7,7 @@ import 'package:camera/camera.dart';
 import 'package:http/http.dart' as http;
 import '../../config/api_config.dart';
 import '../../models/user_model.dart'; // Import your user model!
+import '../../services/device_identity_service.dart';
 import '../../services/face_verification_service.dart';
 import '../../widgets/location_guidance_card.dart';
 
@@ -246,6 +247,9 @@ class _StudentCheckInScreenState extends State<StudentCheckInScreen> {
       var request = http.MultipartRequest(
         "POST",
         Uri.parse(ApiConfig.attendanceCheckInUrl),
+      );
+      request.headers.addAll(
+        await DeviceIdentityService.authHeaders(widget.user.id),
       );
 
       // Include metadata headers/fields

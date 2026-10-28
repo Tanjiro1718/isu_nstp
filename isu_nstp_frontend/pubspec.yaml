@@ -61,6 +61,8 @@ dependencies:
   # Real app version/build shown on the About screen.
   package_info_plus: ^8.1.0
   web: ^1.1.1
+  # Stable per-install id for student device binding.
+  uuid: ^4.5.3
 
 
 dev_dependencies:

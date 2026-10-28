@@ -10,6 +10,7 @@ import 'screens/instructor/instructor_dashboard.dart';
 import 'screens/login_screen.dart';
 import 'screens/student/student_dashboard.dart';
 import 'config/api_config.dart';
+import 'services/device_identity_service.dart';
 import 'services/device_token_service.dart';
 import 'services/session_service.dart';
 
@@ -85,6 +86,7 @@ class _SessionGateState extends State<_SessionGate> {
 
   bool _checking = true;
   UserModel? _user;
+  String? _sessionError;
 
   @override
   void initState() {
@@ -105,6 +107,28 @@ class _SessionGateState extends State<_SessionGate> {
     setState(() {
       _user = user;
       _checking = false;
+    });
+
+    // A session is not valid merely because it was saved. On a bound account,
+    // an admin reset or a different phone must send the user back to login.
+    // Checked in the background so a cold backend cannot hold up startup; an
+    // offline launch keeps the cached session.
+    if (user != null && user.role.toLowerCase() == 'student') {
+      await _verifyDevice(user);
+    }
+  }
+
+  Future<void> _verifyDevice(UserModel user) async {
+    final result = await DeviceIdentityService.validateSession(user);
+    if (result.valid) return;
+
+    await DeviceIdentityService.forgetSecret(user);
+    await SessionService.clear();
+
+    if (!mounted) return;
+    setState(() {
+      _user = null;
+      _sessionError = result.message;
     });
   }
 
@@ -134,7 +158,7 @@ class _SessionGateState extends State<_SessionGate> {
     }
 
     final user = _user;
-    if (user == null) return const LoginScreen();
+    if (user == null) return LoginScreen(initialError: _sessionError);
 
     // An unrecognised role should not strand the user on a blank screen.
     switch (user.role.toLowerCase()) {

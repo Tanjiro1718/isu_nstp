@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import 'device_identity_service.dart';
 
 /// Live state of a student's attendance while an activity is running.
 class PresenceStatus {
@@ -91,9 +92,12 @@ class PresenceService {
   }) async {
     try {
       final response = await http
-          .get(Uri.parse(
-            ApiConfig.presenceStatusUrl(studentUserId, sessionId: sessionId),
-          ))
+          .get(
+            Uri.parse(
+              ApiConfig.presenceStatusUrl(studentUserId, sessionId: sessionId),
+            ),
+            headers: await DeviceIdentityService.authHeaders(studentUserId),
+          )
           .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
@@ -122,6 +126,9 @@ class PresenceService {
         'POST',
         Uri.parse(ApiConfig.presenceRespondUrl),
       );
+      request.headers.addAll(
+        await DeviceIdentityService.authHeaders(studentUserId),
+      );
       request.fields['check_id'] = checkId.toString();
       request.fields['student_id'] = studentUserId.toString();
       request.fields['latitude'] = position.latitude.toString();
@@ -148,7 +155,9 @@ class PresenceService {
       }
       return PresenceActionResult(
         false,
-        decoded['error'] as String? ?? 'Could not confirm your presence.',
+        decoded['error'] as String? ??
+            decoded['message'] as String? ??
+            'Could not confirm your presence.',
       );
     } catch (e) {
       return PresenceActionResult(false, 'Could not confirm presence: $e');
@@ -170,6 +179,9 @@ class PresenceService {
       final request = http.MultipartRequest(
         'POST',
         Uri.parse(ApiConfig.attendanceCheckOutUrl),
+      );
+      request.headers.addAll(
+        await DeviceIdentityService.authHeaders(studentUserId),
       );
       request.fields['record_id'] = recordId.toString();
       request.fields['student_id'] = studentUserId.toString();
@@ -200,7 +212,9 @@ class PresenceService {
       }
       return PresenceActionResult(
         false,
-        decoded['error'] as String? ?? 'Check-out was refused.',
+        decoded['error'] as String? ??
+            decoded['message'] as String? ??
+            'Check-out was refused.',
       );
     } catch (e) {
       return PresenceActionResult(false, 'Check-out failed: $e');

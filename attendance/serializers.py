@@ -15,6 +15,7 @@ from .models import (
 )
 from django.contrib.auth import get_user_model
 from .models import StudentProfile
+from .device_binding import binding_summary
 
 
 User = get_user_model()
@@ -114,6 +115,10 @@ class UserSerializer(serializers.ModelSerializer):
         # yet (legacy accounts) -> the app must prompt before proceeding.
         rep['accepted_terms_at'] = instance.accepted_terms_at.isoformat() if getattr(instance, 'accepted_terms_at', None) else None
         rep['accepted_privacy_at'] = instance.accepted_privacy_at.isoformat() if getattr(instance, 'accepted_privacy_at', None) else None
+        # Read-only summary for the admin user list. The secret is never exposed.
+        rep['bound_device'] = binding_summary(
+            getattr(instance, 'device_binding', None)
+        )
 
         return rep
 

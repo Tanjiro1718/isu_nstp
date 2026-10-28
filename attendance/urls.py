@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 # Updated RegisterAPIView -> RegisterView to match views.py
 from .views import (
     LoginAPIView,
+    DeviceValidateAPIView,
     RegisterView,  
     HealthCheckAPIView,  
     ProcessCheckInAPI,
@@ -73,6 +74,8 @@ urlpatterns = [
     
     # 2. Login endpoint
     path('login/', LoginAPIView.as_view(), name='api-login'),
+    # Session restore: confirm the saved device is still the bound one.
+    path('device/validate/', DeviceValidateAPIView.as_view(), name='api-device-validate'),
     
     # 3. Attendance endpoints
     path('attendance/check-in/', ProcessCheckInAPI.as_view(), name='api-checkin'),

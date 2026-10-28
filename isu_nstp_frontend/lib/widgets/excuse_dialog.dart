@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../models/user_model.dart';
+import '../services/device_identity_service.dart';
 import 'info_hint.dart';
 
 /// Lets a student explain why they missed a session, or why they failed the
@@ -167,6 +168,9 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
     try {
       final uri = Uri.parse(ApiConfig.excusesUrl);
       final request = http.MultipartRequest('POST', uri);
+      request.headers.addAll(
+        await DeviceIdentityService.authHeaders(widget.user.id),
+      );
 
       request.fields['student_id'] = '${widget.user.id}';
       request.fields['session_id'] = '${widget.sessionId}';
@@ -200,8 +204,9 @@ class _ExcuseDialogState extends State<_ExcuseDialog> {
       String message = 'Could not submit your excuse. Please try again.';
       try {
         final decoded = jsonDecode(response.body);
-        if (decoded is Map && decoded['error'] != null) {
-          message = decoded['error'].toString();
+        if (decoded is Map) {
+          final detail = decoded['error'] ?? decoded['message'];
+          if (detail != null) message = detail.toString();
         }
       } catch (_) {
         // Non-JSON error body: keep the generic message.

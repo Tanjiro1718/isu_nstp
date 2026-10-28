@@ -28,6 +28,12 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else ['*']
 
+# Students are bound to one device at login. Keep enforcement off while older
+# installed builds roll over to the device-aware app, then set this to true.
+DEVICE_BINDING_ENFORCED = os.getenv(
+    'DEVICE_BINDING_ENFORCED', 'False'
+).strip().lower() in ('true', '1', 'yes', 'on')
+
 
 # Application definition
 

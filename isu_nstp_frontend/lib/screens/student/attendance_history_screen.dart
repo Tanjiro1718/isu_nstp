@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
+import '../../services/device_identity_service.dart';
 import '../../widgets/excuse_dialog.dart';
 
 /// The student's own attendance record across every class they belong to.
@@ -69,7 +70,7 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
       final response = await http
           .get(
             Uri.parse(ApiConfig.myAttendanceHistoryUrl(widget.user.id)),
-            headers: const {'ngrok-skip-browser-warning': 'true'},
+            headers: await DeviceIdentityService.authHeaders(widget.user.id),
           )
           .timeout(const Duration(seconds: 15));
 
@@ -80,8 +81,9 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
         String message = 'Could not load your records (${response.statusCode}).';
         try {
           final body = json.decode(response.body);
-          if (body is Map && body['error'] != null) {
-            message = body['error'].toString();
+          if (body is Map) {
+            final detail = body['error'] ?? body['message'];
+            if (detail != null) message = detail.toString();
           }
         } catch (_) {
           // Keep the status-code message.
@@ -125,7 +127,7 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
       final response = await http
           .get(
             Uri.parse(ApiConfig.myExcusesUrl(widget.user.id)),
-            headers: const {'ngrok-skip-browser-warning': 'true'},
+            headers: await DeviceIdentityService.authHeaders(widget.user.id),
           )
           .timeout(const Duration(seconds: 15));
 

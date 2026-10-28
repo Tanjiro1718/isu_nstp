@@ -113,6 +113,39 @@ class StudentProfile(models.Model):
         return f"Student: {display_id} - {self.course_and_section or 'Unassigned'}"
 
 
+# 3b. One student account is locked to one device.
+class StudentDeviceBinding(models.Model):
+    """
+    The phone/browser a student account is currently authorized to use.
+
+    A student may log in only from the bound device until an admin resets the
+    binding. The client keeps a random device id plus a server-issued secret;
+    only a hash of the secret is stored here.
+    """
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='device_binding',
+        limit_choices_to={'role': 'student'},
+    )
+    device_id = models.CharField(max_length=128, db_index=True)
+    secret_hash = models.CharField(max_length=256)
+    device_label = models.CharField(max_length=200, blank=True, default='')
+    platform = models.CharField(max_length=32, blank=True, default='')
+    app_version = models.CharField(max_length=32, blank=True, default='')
+    bound_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    last_ip = models.GenericIPAddressField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-bound_at']
+
+    def __str__(self):
+        label = self.device_label or self.platform or 'device'
+        return f"{self.user.username} -> {label}"
+
+
 # 4. Attendance Session created by Instructors
 class AttendanceSessionQuerySet(models.QuerySet):
     def active(self):

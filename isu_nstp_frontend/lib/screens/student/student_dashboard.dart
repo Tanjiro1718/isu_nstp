@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
 import '../../services/class_service.dart';
+import '../../services/device_identity_service.dart';
 import '../../services/presence_service.dart';
 import '../../services/profile_lock_service.dart';
 import '../../widgets/biometric_lock_widget.dart';
@@ -291,10 +292,10 @@ class _StudentDashboardState extends State<StudentDashboard> {
       );
       await http.post(
         Uri.parse(ApiConfig.leaveLocationUpdateUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
+        headers: await DeviceIdentityService.authHeaders(
+          _currentUser.id,
+          json: true,
+        ),
         body: jsonEncode({
           'student_id': _currentUser.id,
           'leave_id': leaveId,
@@ -433,10 +434,10 @@ class _StudentDashboardState extends State<StudentDashboard> {
 
       final response = await http.post(
         Uri.parse(ApiConfig.requestLeaveUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
+        headers: await DeviceIdentityService.authHeaders(
+          _currentUser.id,
+          json: true,
+        ),
         body: jsonEncode({
           'student_id': _currentUser.id,
           'session_id': sessionId,
@@ -462,8 +463,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
         String message = 'Could not submit leave request.';
         try {
           final decoded = jsonDecode(response.body);
-          if (decoded is Map && decoded['error'] != null) {
-            message = decoded['error'].toString();
+          if (decoded is Map) {
+            final detail = decoded['error'] ?? decoded['message'];
+            if (detail != null) message = detail.toString();
           }
         } catch (_) {}
         setState(() => _isRequestingLeave = false);
@@ -489,10 +491,10 @@ class _StudentDashboardState extends State<StudentDashboard> {
 
       final response = await http.post(
         Uri.parse(ApiConfig.returnToGeofenceUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
+        headers: await DeviceIdentityService.authHeaders(
+          _currentUser.id,
+          json: true,
+        ),
         body: jsonEncode({
           'student_id': _currentUser.id,
           'leave_id': leave['id'],
@@ -520,8 +522,9 @@ class _StudentDashboardState extends State<StudentDashboard> {
         String message = 'Could not confirm your return.';
         try {
           final decoded = jsonDecode(response.body);
-          if (decoded is Map && decoded['error'] != null) {
-            message = decoded['error'].toString();
+          if (decoded is Map) {
+            final detail = decoded['error'] ?? decoded['message'];
+            if (detail != null) message = detail.toString();
           }
         } catch (_) {}
         setState(() => _isReturning = false);
@@ -541,7 +544,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
     try {
       final response = await http.get(
         Uri.parse(ApiConfig.leaveStatusUrl(_currentUser.id, sessionId)),
-        headers: {'ngrok-skip-browser-warning': 'true'},
+        headers: await DeviceIdentityService.authHeaders(_currentUser.id),
       );
 
       if (response.statusCode == 200 && mounted) {
@@ -1037,7 +1040,7 @@ class _StudentDashboardState extends State<StudentDashboard> {
     try {
       final response = await http.get(
         Uri.parse(ApiConfig.myExcusesUrl(_currentUser.id)),
-        headers: {'ngrok-skip-browser-warning': 'true'},
+        headers: await DeviceIdentityService.authHeaders(_currentUser.id),
       );
       if (response.statusCode == 200 && mounted) {
         final body = jsonDecode(response.body);

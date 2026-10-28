@@ -172,6 +172,73 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
     }
   }
 
+  /// Clears a student's device lock so the next login can claim a new phone.
+  Future<void> _resetDevice(int userId, String username) async {
+    final admin = widget.currentUser;
+    if (admin == null) {
+      _showSnackBar('Sign in as an admin to reset devices.', Colors.red);
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset device binding?'),
+        content: Text(
+          'The next device that signs in as $username will claim the account. '
+          'The phone currently bound will stop working until then.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurple),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset Device'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final response = await http.post(
+        Uri.parse(ApiConfig.resetDeviceUrl(userId)),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'admin_user_id': admin.id}),
+      );
+
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        _showSnackBar(
+          body is Map && body['message'] != null
+              ? body['message'].toString()
+              : 'Device binding reset.',
+          Colors.green,
+        );
+        _fetchUsers();
+      } else {
+        _showSnackBar(
+          'Could not reset device. ${_extractError(response)}',
+          Colors.red,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar('Network error: $e', Colors.red);
+    }
+  }
+
+  String _formatBoundAt(dynamic value) {
+    if (value == null) return '';
+    final text = value.toString();
+    if (text.isEmpty) return '';
+    return text.replaceFirst('T', ' ').split('.').first;
+  }
+
   String _extractError(http.Response response) {
     try {
       final decoded = json.decode(response.body);
@@ -393,6 +460,8 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                         String? studentId = user['student_id'];
                         String? course = user['course'];
                         String? section = user['section'];
+                        final boundRaw = user['bound_device'];
+                        final boundDevice = boundRaw is Map ? boundRaw : null;
 
                         return Card(
                           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -431,6 +500,33 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                                 Text(user['email'] ?? 'No email provided', style: const TextStyle(fontSize: 12)),
                                 if (role == 'student' && studentId != null)
                                   Text('ID: $studentId | $course - $section', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                                if (role == 'student') ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    boundDevice == null
+                                        ? 'No device bound'
+                                        : 'Device: ${boundDevice['label'] ?? 'Unknown'} '
+                                            '(${boundDevice['device_code'] ?? '—'})',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: boundDevice == null
+                                          ? Colors.grey.shade500
+                                          : Colors.blueGrey.shade700,
+                                      fontWeight: boundDevice == null
+                                          ? FontWeight.normal
+                                          : FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (boundDevice != null &&
+                                      boundDevice['last_seen_at'] != null)
+                                    Text(
+                                      'Last seen: ${_formatBoundAt(boundDevice['last_seen_at'])}',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                ],
                               ],
                             ),
                             trailing: cannotDelete
@@ -438,28 +534,44 @@ class _AdminManageUsersScreenState extends State<AdminManageUsersScreen> {
                                     message: "Admin deletion is disabled to prevent system lockout.",
                                     child: Padding(padding: EdgeInsets.all(8.0), child: Icon(Icons.shield, color: Colors.grey.shade600)),
                                   )
-                                : IconButton(
-                                    icon: Icon(Icons.delete, color: Colors.grey.shade600),
-                                    onPressed: () {
-                                      showDialog(
-                                        context: context,
-                                        builder: (ctx) => AlertDialog(
-                                          title: const Text('Delete User?'),
-                                          content: Text('Are you sure you want to delete ${user['username']}?'),
-                                          actions: [
-                                            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                                            ElevatedButton(
-                                              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                                              onPressed: () {
-                                                Navigator.pop(ctx);
-                                                _deleteUser(user['id']);
-                                              },
-                                              child: const Text('Delete', style: TextStyle(color: Colors.white)),
-                                            ),
-                                          ],
+                                : Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (role == 'student' && boundDevice != null)
+                                        IconButton(
+                                          icon: const Icon(Icons.phonelink_erase, color: Colors.deepPurple),
+                                          tooltip: 'Reset device binding',
+                                          onPressed: () => _resetDevice(
+                                            user['id'] is int
+                                                ? user['id'] as int
+                                                : int.parse('${user['id']}'),
+                                            user['username']?.toString() ?? 'this student',
+                                          ),
                                         ),
-                                      );
-                                    },
+                                      IconButton(
+                                        icon: Icon(Icons.delete, color: Colors.grey.shade600),
+                                        onPressed: () {
+                                          showDialog(
+                                            context: context,
+                                            builder: (ctx) => AlertDialog(
+                                              title: const Text('Delete User?'),
+                                              content: Text('Are you sure you want to delete ${user['username']}?'),
+                                              actions: [
+                                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                                                ElevatedButton(
+                                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                                                  onPressed: () {
+                                                    Navigator.pop(ctx);
+                                                    _deleteUser(user['id']);
+                                                  },
+                                                  child: const Text('Delete', style: TextStyle(color: Colors.white)),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ],
                                   ),
                           ),
                         );

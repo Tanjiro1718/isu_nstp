@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/user_model.dart';
 import '../config/api_config.dart';
+import '../services/device_identity_service.dart';
 import '../services/device_token_service.dart';
 import '../services/session_service.dart';
 import '../utils/password_policy.dart';
@@ -17,7 +18,10 @@ import 'register_screen.dart';
 import 'student/student_dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  /// Shown once on arrival when a saved session was rejected for its device.
+  final String? initialError;
+
+  const LoginScreen({super.key, this.initialError});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -37,6 +41,17 @@ class _LoginScreenState extends State<LoginScreen> {
   final String loginUrl = ApiConfig.loginUrl;
 
   @override
+  void initState() {
+    super.initState();
+    final message = widget.initialError;
+    if (message != null && message.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showSnackBar(message, Colors.red);
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
@@ -48,6 +63,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
 
+    final username = _usernameController.text.trim();
+    final deviceFields = await DeviceIdentityService.loginFields(username);
+
     try {
       final response = await http
           .post(
@@ -57,11 +75,12 @@ class _LoginScreenState extends State<LoginScreen> {
               'ngrok-skip-browser-warning': 'true',
             },
             body: jsonEncode({
-              'username': _usernameController.text.trim(),
+              'username': username,
               'password': _passwordController.text,
+              ...deviceFields,
             }),
           )
-          .timeout(const Duration(seconds: 7));
+          .timeout(const Duration(seconds: 15));
 
       if (!mounted) return;
 
@@ -76,6 +95,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 : responseData;
 
         var user = UserModel.fromJson(userMap);
+
+        final rawBinding = responseData['device_binding'];
+        await DeviceIdentityService.rememberBinding(
+          username: username,
+          userId: user.id,
+          deviceBinding:
+              rawBinding is Map ? rawBinding.cast<String, dynamic>() : null,
+        );
 
         // First-use consent gate. Legacy / staff accounts created before the
         // Privacy Policy and Terms existed have null timestamps, so the app
@@ -733,7 +760,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Image.asset(
-                          'assets/images/isu_logo.png',
+                          'assets/images/isu_nstp_logo.jpg',
                           height: 90,
                           width: 90,
                           fit: BoxFit.contain,

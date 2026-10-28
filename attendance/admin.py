@@ -11,6 +11,7 @@ from .models import (
     ClassGroup,
     ClassEnrollment,
     AccountDeletionRequest,
+    StudentDeviceBinding,
 )
 
 
@@ -58,6 +59,43 @@ class PendingApprovalAdmin(admin.ModelAdmin):
             obj.user.is_active = True
             obj.user.save()
         super().save_model(request, obj, form, change)
+
+# ==========================================
+# 3b. DEVICE BINDINGS
+# ==========================================
+@admin.register(StudentDeviceBinding)
+class StudentDeviceBindingAdmin(admin.ModelAdmin):
+    list_display = (
+        'user',
+        'device_label',
+        'platform',
+        'bound_at',
+        'last_seen_at',
+    )
+    search_fields = ('user__username', 'user__student_profile__student_id', 'device_id')
+    list_filter = ('platform',)
+    readonly_fields = (
+        'user',
+        'device_id',
+        'secret_hash',
+        'device_label',
+        'platform',
+        'app_version',
+        'bound_at',
+        'last_seen_at',
+        'last_ip',
+    )
+    actions = ['reset_device_binding']
+
+    @admin.action(description='Reset selected students to a new device')
+    def reset_device_binding(self, request, queryset):
+        count = queryset.count()
+        queryset.delete()
+        self.message_user(
+            request,
+            f'{count} device binding(s) reset. Students can sign in on a new device.',
+        )
+
 
 # ==========================================
 # 4. CLASS GROUPS
