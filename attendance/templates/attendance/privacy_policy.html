@@ -132,7 +132,7 @@
         <h1>Privacy Policy for ISU NSTP Attendance</h1>
 
         <p class="updated">
-            <strong>Last Updated:</strong> September 10, 2026
+            <strong>Last Updated:</strong> October 28, 2026
         </p>
 
         <p>
@@ -255,7 +255,83 @@
         </p>
 
 
-        <h3>2.5 Technical and Diagnostic Information</h3>
+        <h3>2.5 Device and Installation Information</h3>
+
+        <p>
+            To recognise your device, secure your account, and prevent misuse,
+            the App may collect and store:
+        </p>
+
+        <ul>
+            <li>
+                A randomly generated installation identifier created by the App
+                and stored on your device. It is not your phone's hardware
+                serial number or advertising identifier.
+            </li>
+            <li>Device type or label, operating system platform, and app version</li>
+            <li>
+                A per-account device-binding credential issued by the server on
+                first sign-in, used to confirm that attendance actions come from
+                an authorised device
+            </li>
+            <li>
+                A Firebase Cloud Messaging (FCM) registration token used to
+                deliver push notifications. This token may change over time and
+                is updated when it does.
+            </li>
+        </ul>
+
+        <p>
+            This information is used to bind an account to a device,
+            authenticate users, deliver notifications, and detect unauthorised
+            or unusual access.
+        </p>
+
+
+        <h3>2.6 On-Device Face Verification</h3>
+
+        <p>
+            When you check in, the App may compare a live selfie with the
+            reference photo on file for your account (for example, your uploaded
+            identification photo) to help confirm your identity.
+        </p>
+
+        <p>
+            This comparison is performed entirely on your device using an
+            on-device face detection and recognition model. The resulting face
+            embeddings (mathematical representations of a face) are processed
+            and cached only on your device. They are not uploaded to or stored
+            on our servers.
+        </p>
+
+        <p>
+            The App sends only the result of the comparison to the server along
+            with the attendance record &mdash; specifically, whether a face
+            match was found and a similarity score. The selfie photograph itself
+            is transmitted and stored as part of the attendance record, and may
+            be reviewed by authorised NSTP personnel.
+        </p>
+
+
+        <h3>2.7 Biometric Unlock and Device Authentication</h3>
+
+        <p>
+            The App may offer an optional profile lock that uses your device's
+            own authentication, such as a fingerprint, face unlock, or device
+            PIN. This check is handled by your device's operating system, and
+            the App receives only a success or failure result.
+        </p>
+
+        <p>
+            The App does not receive, access, or store your fingerprint, face
+            template, or other biometric data. Biometric information remains in
+            your device's secure storage and is never transmitted to our
+            servers. The App stores only a per-account on/off preference for the
+            profile lock on your device.
+        </p>
+
+
+        <h3>2.8 Technical and Diagnostic Information</h3>
 
         <p>
             The App and its supporting services may process limited technical
@@ -281,7 +357,8 @@
         <ul>
             <li>Create and manage user accounts</li>
             <li>Authenticate users</li>
-            <li>Verify user identity</li>
+            <li>Bind accounts to authorised devices</li>
+            <li>Verify user identity, including through on-device face comparison</li>
             <li>Record NSTP attendance</li>
             <li>Manage NSTP participation</li>
             <li>Process check-in and check-out activities</li>
@@ -363,8 +440,10 @@
 
         <p>
             Firebase may be used to deliver push notifications to your device.
-            Google's handling of data in connection with Firebase is governed
-            by Google's own privacy policy and terms of service.
+            For this purpose, Firebase processes a device registration token and
+            related technical information. Google's handling of data in
+            connection with Firebase is governed by Google's own privacy policy
+            and terms of service.
         </p>
 
         <p>
