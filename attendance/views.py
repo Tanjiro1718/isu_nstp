@@ -90,6 +90,41 @@ def privacy_policy(request):
 def terms_and_conditions(request):
     return render(request, "attendance/terms_and_conditions.html")
 
+
+def robots_txt(request):
+    """Allow crawlers and point them at the sitemap.
+
+    Google Play's policy checker fetches the privacy policy directly, but a
+    valid robots.txt removes any ambiguity about whether the page may be
+    crawled.
+    """
+    sitemap_url = request.build_absolute_uri("/sitemap.xml")
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "",
+        f"Sitemap: {sitemap_url}",
+        "",
+    ]
+    return HttpResponse("\n".join(lines), content_type="text/plain; charset=utf-8")
+
+
+def sitemap_xml(request):
+    """Minimal sitemap listing the public policy pages."""
+    pages = [
+        request.build_absolute_uri("/privacy-policy/"),
+        request.build_absolute_uri("/terms-conditions/"),
+        request.build_absolute_uri("/account-deletion/"),
+    ]
+    url_entries = "".join(f"  <url><loc>{url}</loc></url>\n" for url in pages)
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{url_entries}"
+        "</urlset>\n"
+    )
+    return HttpResponse(xml, content_type="application/xml; charset=utf-8")
+
 def generate_otp():
     """Helper function to generate a random 6-digit OTP code."""
     return str(random.randint(100000, 999999))

@@ -19,7 +19,13 @@ from django.urls import path, include, re_path
 from rest_framework.routers import DefaultRouter
 from attendance.views import UserViewSet, invite_landing_page
 from django.conf import settings
-from attendance.views import privacy_policy, account_deletion_page, terms_and_conditions
+from attendance.views import (
+    privacy_policy,
+    account_deletion_page,
+    terms_and_conditions,
+    robots_txt,
+    sitemap_xml,
+)
 from django.views.static import serve
 
 
@@ -31,6 +37,9 @@ urlpatterns = [
     path('api/', include('attendance.urls')),
     path("privacy-policy/", privacy_policy, name="privacy_policy"),
     path("terms-conditions/", terms_and_conditions, name="terms_and_conditions"),
+    # Crawler hints so the policy pages are unambiguously discoverable.
+    path("robots.txt", robots_txt, name="robots_txt"),
+    path("sitemap.xml", sitemap_xml, name="sitemap_xml"),
     # Account deletion URL required by the Google Play data-safety form.
     path("account-deletion/", account_deletion_page, name="account_deletion"),
 
