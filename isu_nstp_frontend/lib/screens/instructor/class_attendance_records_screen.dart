@@ -148,48 +148,48 @@ class _ClassAttendanceRecordsScreenState
     return '${months[parsed.month - 1]} ${parsed.day}, ${parsed.year}';
   }
 
-  Future<void> _showAbsentStudents() async {
+  Future<void> _showAbsentStudents() => _showStudentRecords(absent: true);
+
+  Future<void> _showPresentStudents() => _showStudentRecords(absent: false);
+
+  /// Shared sheet behind the Absent and Present summary chips.
+  ///
+  /// It reads the rows already powering the summary instead of re-fetching, so
+  /// the list can never disagree with the count the instructor just tapped.
+  Future<void> _showStudentRecords({required bool absent}) async {
     final classGroup = _selectedClass;
     if (classGroup == null) return;
 
-    final isToday = _selectedDate == null;
-    final date = _selectedDate ?? _isoDate(DateTime.now());
+    final date = _selectedDate;
+    final allDates = date == null;
+    final isToday = date != null && date == _isoDate(DateTime.now());
 
-    List<Map<String, dynamic>> records;
-    if (isToday) {
-      try {
-        final data = await _fetchAttendance(classGroup.id, date: date);
-        records = (data['records'] as List<dynamic>)
-            .cast<Map<String, dynamic>>();
-      } on _AttendanceFetchException catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load absences: ${e.message}')),
-        );
-        return;
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load absences: $e')),
-        );
-        return;
-      }
-    } else {
-      records = _records;
-    }
-
-    if (!mounted) return;
-
-    final absent = records
-        .where((row) => row['attended'] != true && row['status'] == 'Absent')
+    final rows = _records
+        .where((row) => absent
+            ? row['attended'] != true && row['status'] == 'Absent'
+            : row['attended'] == true)
         .toList()
       ..sort((a, b) {
+        final byDate = (a['activity_date']?.toString() ?? '')
+            .compareTo(b['activity_date']?.toString() ?? '');
+        if (byDate != 0) return byDate;
         final left = a['student_name']?.toString().toLowerCase() ?? '';
         final right = b['student_name']?.toString().toLowerCase() ?? '';
         return left.compareTo(right);
       });
     final excusedCount =
-        records.where((row) => row['status'] == 'Excused').length;
+        _records.where((row) => row['status'] == 'Excused').length;
+    final periodLabel = allDates
+        ? 'All dates'
+        : '${isToday ? 'Today, ' : ''}${_displayDate(date)}';
+
+    final accent = absent ? Colors.orange : Colors.blue;
+    final title = absent ? 'Absent Students' : 'Present Students';
+    final emptyText = absent
+        ? 'No absent students for '
+            '${allDates ? 'this class' : _displayDate(date)}.'
+        : 'No students have timed in for '
+            '${allDates ? 'this class' : _displayDate(date)}.';
 
     showModalBottomSheet<void>(
       context: context,
@@ -213,8 +213,10 @@ class _ClassAttendanceRecordsScreenState
                   child: Row(
                     children: [
                       Icon(
-                        Icons.person_off_outlined,
-                        color: Colors.orange.shade800,
+                        absent
+                            ? Icons.person_off_outlined
+                            : Icons.how_to_reg_outlined,
+                        color: accent.shade800,
                         size: 26,
                       ),
                       const SizedBox(width: 10),
@@ -222,18 +224,16 @@ class _ClassAttendanceRecordsScreenState
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Absent Students',
-                              style: TextStyle(
+                            Text(
+                              title,
+                              style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${classGroup.name} • '
-                              '${isToday ? 'Today, ' : ''}'
-                              '${_displayDate(date)}',
+                              '${classGroup.name} • $periodLabel',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey.shade600,
@@ -248,16 +248,16 @@ class _ClassAttendanceRecordsScreenState
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
+                          color: accent.shade50,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.orange.shade200),
+                          border: Border.all(color: accent.shade200),
                         ),
                         child: Text(
-                          '${absent.length}',
+                          '${rows.length}',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
-                            color: Colors.orange.shade900,
+                            color: accent.shade900,
                           ),
                         ),
                       ),
@@ -265,20 +265,24 @@ class _ClassAttendanceRecordsScreenState
                   ),
                 ),
                 const Divider(height: 1),
-                if (absent.isEmpty)
+                if (rows.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(28),
                     child: Center(
                       child: Column(
                         children: [
                           Icon(
-                            Icons.check_circle_outline,
+                            absent
+                                ? Icons.check_circle_outline
+                                : Icons.info_outline,
                             size: 40,
-                            color: Colors.green.shade400,
+                            color: absent
+                                ? Colors.green.shade400
+                                : Colors.grey.shade400,
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'No absent students for ${_displayDate(date)}.',
+                            emptyText,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 13,
@@ -293,12 +297,13 @@ class _ClassAttendanceRecordsScreenState
                   Flexible(
                     child: ListView.separated(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                      itemCount: absent.length,
+                      itemCount: rows.length,
                       separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (_, index) => _absentRow(absent[index]),
+                      itemBuilder: (_, index) =>
+                          _recordRow(rows[index], absent: absent),
                     ),
                   ),
-                if (excusedCount > 0)
+                if (absent && excusedCount > 0)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
                     child: Text(
@@ -319,28 +324,33 @@ class _ClassAttendanceRecordsScreenState
     );
   }
 
-  Widget _absentRow(Map<String, dynamic> record) {
+  Widget _recordRow(Map<String, dynamic> record, {required bool absent}) {
     final name = record['student_name']?.toString() ?? 'Unknown Student';
     final studentId = record['student_id']?.toString() ?? '--';
     final section = record['course_and_section']?.toString() ?? '';
+    final activityDate = record['activity_date']?.toString() ?? '';
     final activity = record['activity']?.toString() ?? '';
     final activityTime = record['activity_time']?.toString() ?? '';
+    final timeIn = record['time_in']?.toString() ?? '';
     final remarks = record['remarks']?.toString() ?? '';
+    final accent = absent ? Colors.orange : Colors.blue;
 
     final identity = [studentId, if (section.isNotEmpty) section].join(' • ');
     final activityLine = [
+      if (activityDate.isNotEmpty) _displayDate(activityDate),
       if (activity.isNotEmpty) activity,
       if (activityTime.isNotEmpty) activityTime,
+      if (!absent && timeIn.isNotEmpty) 'In: $timeIn',
     ].join(' • ');
 
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       leading: CircleAvatar(
-        backgroundColor: Colors.orange.withValues(alpha: 0.15),
+        backgroundColor: accent.withValues(alpha: 0.15),
         child: Text(
           name.isNotEmpty ? name[0].toUpperCase() : '?',
           style: TextStyle(
-            color: Colors.orange.shade900,
+            color: accent.shade900,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -363,7 +373,7 @@ class _ClassAttendanceRecordsScreenState
               remarks,
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.orange.shade800,
+                color: accent.shade800,
                 fontStyle: FontStyle.italic,
               ),
             ),
@@ -563,7 +573,12 @@ class _ClassAttendanceRecordsScreenState
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _summaryChip('Expected', expected, Colors.grey),
-                _summaryChip('Present', present, Colors.blue),
+                _summaryChip(
+                  'Present',
+                  present,
+                  Colors.blue,
+                  onTap: _showPresentStudents,
+                ),
                 _summaryChip(
                   'Absent',
                   absent,

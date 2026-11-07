@@ -314,7 +314,8 @@ class _DirectorAttendanceRecordsScreenState
               const SizedBox(width: 10),
               Expanded(
                 child: _statCard('${summary.present}', 'Present',
-                    Icons.check_circle, Colors.green),
+                    Icons.check_circle, Colors.green,
+                    onTap: _showPresentStudents),
               ),
             ],
           ),
@@ -323,7 +324,8 @@ class _DirectorAttendanceRecordsScreenState
             children: [
               Expanded(
                 child: _statCard('${summary.absent}', 'Absent',
-                    Icons.cancel, Colors.red),
+                    Icons.cancel, Colors.red,
+                    onTap: _showAbsentStudents),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -352,17 +354,218 @@ class _DirectorAttendanceRecordsScreenState
     );
   }
 
-  Widget _statCard(String value, String label, IconData icon, Color color) {
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(width: 10),
-            Column(
+  void _showAbsentStudents() => _showStudents(absent: true);
+
+  void _showPresentStudents() => _showStudents(absent: false);
+
+  /// Shared sheet behind the Absent and Present summary cards.
+  void _showStudents({required bool absent}) {
+    final data = _data;
+    if (data == null) return;
+
+    final students = data.records
+        .where((student) =>
+            absent ? student.status == 'Absent' : student.status == 'Present')
+        .toList()
+      ..sort((a, b) => a.studentName
+          .toLowerCase()
+          .compareTo(b.studentName.toLowerCase()));
+
+    var scope = _program == 'All' ? 'All programs' : _program;
+    if (_classId != null) {
+      final match = _classes.where((c) => c.classId == _classId).toList();
+      if (match.isNotEmpty) scope = '${match.first.className} • $scope';
+    }
+
+    final accent = absent ? Colors.red : Colors.green;
+    final title = absent ? 'Absent Students' : 'Present Students';
+    final emptyText = absent
+        ? 'No absent students for ${_pretty(_date)}.'
+        : 'No students checked in for ${_pretty(_date)}.';
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(sheetContext).size.height * 0.75,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      absent
+                          ? Icons.person_off_outlined
+                          : Icons.how_to_reg_outlined,
+                      color: accent.shade700,
+                      size: 26,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '$scope • ${_pretty(_date)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accent.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: accent.shade200),
+                      ),
+                      child: Text(
+                        '${students.length}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: accent.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              if (students.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(
+                          absent
+                              ? Icons.check_circle_outline
+                              : Icons.info_outline,
+                          size: 40,
+                          color: absent
+                              ? Colors.green.shade400
+                              : Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          emptyText,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    itemCount: students.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (_, index) =>
+                        _studentRow(students[index], absent: absent),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _studentRow(DailyRecordStudent student, {required bool absent}) {
+    final name = student.studentName.trim().isEmpty
+        ? 'Unknown Student'
+        : student.studentName;
+    final accent = absent ? Colors.red : Colors.green;
+    final identity = [
+      student.studentId,
+      if (student.courseAndSection.isNotEmpty) student.courseAndSection,
+      if (student.className.isNotEmpty) student.className,
+    ].join(' • ');
+    final activityLine = [
+      if (student.component.isNotEmpty) student.component,
+      if (absent && student.missedCount > 0)
+        '${student.missedCount} missed '
+            '${student.missedCount == 1 ? 'activity' : 'activities'}',
+      if (!absent && student.attendedCount > 0)
+        '${student.attendedCount} checked in '
+            '${student.attendedCount == 1 ? 'activity' : 'activities'}',
+    ].join(' • ');
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      leading: CircleAvatar(
+        backgroundColor: accent.withValues(alpha: 0.15),
+        child: Text(
+          name.isNotEmpty ? name[0].toUpperCase() : '?',
+          style: TextStyle(
+            color: accent.shade900,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+      title: Text(
+        name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(identity, style: const TextStyle(fontSize: 12)),
+          if (activityLine.isNotEmpty)
+            Text(
+              activityLine,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statCard(
+    String value,
+    String label,
+    IconData icon,
+    Color color, {
+    VoidCallback? onTap,
+  }) {
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
@@ -376,9 +579,20 @@ class _DirectorAttendanceRecordsScreenState
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+          if (onTap != null)
+            Icon(Icons.chevron_right, size: 18, color: color),
+        ],
       ),
+    );
+
+    return Card(
+      elevation: 1,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: onTap == null
+          ? content
+          : InkWell(onTap: onTap, child: content),
     );
   }
 

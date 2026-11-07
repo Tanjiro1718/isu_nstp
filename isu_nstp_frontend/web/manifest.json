@@ -5,7 +5,10 @@
     "start_url": "/",
     "scope": "/",
     "display": "standalone",
-    "display_override": ["standalone", "minimal-ui"],
+    "display_override": [
+        "standalone",
+        "minimal-ui"
+    ],
     "background_color": "#FFFFFF",
     "theme_color": "#006837",
     "description": "Attendance, presence verification and class management for the Isabela State University NSTP program.",
